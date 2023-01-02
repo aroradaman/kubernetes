@@ -89,7 +89,7 @@ const (
 
 	// AffinityConfirmCount is the number of needed continuous requests to confirm that
 	// affinity is enabled.
-	AffinityConfirmCount = 15
+	AffinityConfirmCount = 130
 
 	// label define which is used to find kube-proxy and kube-apiserver pod
 	kubeProxyLabelName     = "kube-proxy"

@@ -58,27 +58,38 @@ func NewWithTLSConfig(config *tls.Config, followNonLocalRedirects bool) Prober {
 			DialContext: probe.ProbeDialer().DialContext,
 		})
 
-	return httpProber{transport, followNonLocalRedirects}
+	return &httpProber{nil, transport, followNonLocalRedirects}
 }
 
 // Prober is an interface that defines the Probe function for doing HTTP readiness/liveness checks.
 type Prober interface {
 	Probe(req *http.Request, timeout time.Duration) (probe.Result, string, error)
+	SetRequestObj(req *http.Request)
 }
 
 type httpProber struct {
+	request                 *http.Request
 	transport               *http.Transport
 	followNonLocalRedirects bool
 }
 
+func (pr *httpProber) SetRequestObj(req *http.Request) {
+	pr.request = req
+}
+
 // Probe returns a ProbeRunner capable of running an HTTP check.
-func (pr httpProber) Probe(req *http.Request, timeout time.Duration) (probe.Result, string, error) {
+func (pr *httpProber) Probe(req *http.Request, timeout time.Duration) (probe.Result, string, error) {
 	client := &http.Client{
 		Timeout:       timeout,
 		Transport:     pr.transport,
 		CheckRedirect: RedirectChecker(pr.followNonLocalRedirects),
 	}
-	return DoHTTPProbe(req, client)
+
+	if req == nil {
+		return DoHTTPProbe(pr.request, client)
+	} else {
+		return DoHTTPProbe(req, client)
+	}
 }
 
 // GetHTTPInterface is an interface for making HTTP requests, that returns a response and error.

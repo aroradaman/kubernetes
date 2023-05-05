@@ -203,7 +203,19 @@ func (m *GracefulTerminationManager) MoveRSOutofGracefulDeleteList(uniqueRS stri
 	if !find || rsToDelete == nil {
 		return fmt.Errorf("failed to find rs: %q", uniqueRS)
 	}
+
+	//rsToDelete.VirtualServer, rsToDelete.RealServer
+	klog.V(4).InfoS("calling ipvs delete", "vs", rsToDelete.VirtualServer.String(), "rs", rsToDelete.RealServer.String(), "rs_weight", rsToDelete.RealServer.Weight)
 	err := m.ipvs.DeleteRealServer(rsToDelete.VirtualServer, rsToDelete.RealServer)
+
+	// listing real servers for the vs
+	klog.V(4).InfoS("querying rs for the vs", "vs", rsToDelete.VirtualServer.String())
+	rss, _ := m.ipvs.GetRealServers(rsToDelete.VirtualServer)
+	klog.V(4).InfoS("found rs for the vs", "count", len(rss))
+	for _, rs := range rss {
+		klog.V(4).InfoS("found rs", "rs", rs.String(), "rs_weight", rs.Weight)
+	}
+
 	if err != nil {
 		return err
 	}

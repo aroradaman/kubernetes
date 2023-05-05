@@ -1908,6 +1908,7 @@ func (proxier *Proxier) syncEndpoint(svcPortName proxy.ServicePortName, onlyNode
 			// if we are syncing for the first time, loop through all current destinations and
 			// reset their weight.
 			if proxier.initialSync {
+				klog.V(4).InfoS("using initial sync to reset weight", "endpoint", ep)
 				for _, dest := range curDests {
 					if dest.Weight != newDest.Weight {
 						err = proxier.ipvs.UpdateRealServer(appliedVirtualServer, newDest)
@@ -1917,19 +1918,24 @@ func (proxier *Proxier) syncEndpoint(svcPortName proxy.ServicePortName, onlyNode
 						}
 					}
 				}
+			} else {
+				klog.V(4).InfoS("weight not updated as part of initial sync", "ep", ep)
 			}
 			// check if newEndpoint is in gracefulDelete list, if true, delete this ep immediately
 			uniqueRS := GetUniqueRSName(vs, newDest)
 			if !proxier.gracefuldeleteManager.InTerminationList(uniqueRS) {
 				continue
 			}
-			klog.V(5).InfoS("new ep is in graceful delete list", "uniqueRealServer", uniqueRS)
+			klog.V(4).InfoS("new ep is in graceful delete list", "uniqueRealServer", uniqueRS, "ep", ep)
 			err := proxier.gracefuldeleteManager.MoveRSOutofGracefulDeleteList(uniqueRS)
+			klog.V(4).InfoS("moving rs out of graceful delete list", "endpoint", ep, "error", err)
+
 			if err != nil {
 				klog.ErrorS(err, "Failed to delete endpoint in gracefulDeleteQueue", "endpoint", ep)
 				continue
 			}
 		}
+		klog.V(4).InfoS("adding new real server", "endpoint", ep)
 		err = proxier.ipvs.AddRealServer(appliedVirtualServer, newDest)
 		if err != nil {
 			klog.ErrorS(err, "Failed to add destination", "newDest", newDest)

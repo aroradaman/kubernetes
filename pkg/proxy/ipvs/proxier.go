@@ -261,7 +261,7 @@ type Proxier struct {
 	recorder       events.EventRecorder
 
 	serviceHealthServer healthcheck.ServiceHealthServer
-	healthzServer       healthcheck.ProxierHealthUpdater
+	healthManager       healthcheck.ProxierHealthManager
 
 	ipvsScheduler string
 	// The following buffers are used to reuse memory and avoid allocations
@@ -325,7 +325,7 @@ func NewProxier(ipFamily v1.IPFamily,
 	hostname string,
 	nodeIP net.IP,
 	recorder events.EventRecorder,
-	healthzServer healthcheck.ProxierHealthUpdater,
+	healthManager healthcheck.ProxierHealthManager,
 	scheduler string,
 	nodePortAddressStrings []string,
 	kernelHandler KernelHandler,
@@ -410,8 +410,7 @@ func NewProxier(ipFamily v1.IPFamily,
 	}
 
 	nodePortAddresses := proxyutil.NewNodePortAddresses(ipFamily, nodePortAddressStrings)
-
-	serviceHealthServer := healthcheck.NewServiceHealthServer(hostname, recorder, nodePortAddresses, healthzServer)
+	serviceHealthServer := healthcheck.NewServiceHealthServer(hostname, recorder, nodePortAddresses, healthManager)
 
 	// excludeCIDRs has been validated before, here we just parse it to IPNet list
 	parsedExcludeCIDRs, _ := netutils.ParseCIDRs(excludeCIDRs)
@@ -435,7 +434,7 @@ func NewProxier(ipFamily v1.IPFamily,
 		nodeIP:                nodeIP,
 		recorder:              recorder,
 		serviceHealthServer:   serviceHealthServer,
-		healthzServer:         healthzServer,
+		healthManager:         healthManager,
 		ipvs:                  ipvs,
 		ipvsScheduler:         scheduler,
 		iptablesData:          bytes.NewBuffer(nil),
@@ -482,7 +481,7 @@ func NewDualStackProxier(
 	hostname string,
 	nodeIP [2]net.IP,
 	recorder events.EventRecorder,
-	healthzServer healthcheck.ProxierHealthUpdater,
+	healthManagers [2]healthcheck.ProxierHealthManager,
 	scheduler string,
 	nodePortAddresses []string,
 	kernelHandler KernelHandler,
@@ -495,7 +494,7 @@ func NewDualStackProxier(
 		exec, syncPeriod, minSyncPeriod, filterCIDRs(false, excludeCIDRs), strictARP,
 		tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll, masqueradeBit,
 		localDetectors[0], hostname, nodeIP[0],
-		recorder, healthzServer, scheduler, nodePortAddresses, kernelHandler)
+		recorder, healthManagers[0], scheduler, nodePortAddresses, kernelHandler)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv4 proxier: %v", err)
 	}
@@ -504,7 +503,7 @@ func NewDualStackProxier(
 		exec, syncPeriod, minSyncPeriod, filterCIDRs(true, excludeCIDRs), strictARP,
 		tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll, masqueradeBit,
 		localDetectors[1], hostname, nodeIP[1],
-		recorder, healthzServer, scheduler, nodePortAddresses, kernelHandler)
+		recorder, healthManagers[1], scheduler, nodePortAddresses, kernelHandler)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv6 proxier: %v", err)
 	}
@@ -755,8 +754,8 @@ func CleanupLeftovers(ipvs utilipvs.Interface, ipt utiliptables.Interface, ipset
 
 // Sync is called to synchronize the proxier state to iptables and ipvs as soon as possible.
 func (proxier *Proxier) Sync() {
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.QueuedUpdate()
+	if proxier.healthManager != nil {
+		proxier.healthManager.QueuedUpdate()
 	}
 	metrics.SyncProxyRulesLastQueuedTimestamp.SetToCurrentTime()
 	proxier.syncRunner.Run()
@@ -765,8 +764,8 @@ func (proxier *Proxier) Sync() {
 // SyncLoop runs periodic work.  This is expected to run as a goroutine or as the main loop of the app.  It does not return.
 func (proxier *Proxier) SyncLoop() {
 	// Update healthz timestamp at beginning in case Sync() never succeeds.
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.Updated()
+	if proxier.healthManager != nil {
+		proxier.healthManager.Updated()
 	}
 	// synthesize "last change queued" time as the informers are syncing.
 	metrics.SyncProxyRulesLastQueuedTimestamp.SetToCurrentTime()
@@ -1480,8 +1479,8 @@ func (proxier *Proxier) syncProxyRules() {
 	}
 	proxier.cleanLegacyService(activeIPVSServices, currentIPVSServices)
 
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.Updated()
+	if proxier.healthManager != nil {
+		proxier.healthManager.Updated()
 	}
 	metrics.SyncProxyRulesLastTimestamp.SetToCurrentTime()
 

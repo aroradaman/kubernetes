@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -159,7 +160,7 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.Hostname,
 				nodeIPTuple(config.BindAddress),
 				s.Recorder,
-				s.HealthzServer,
+				[2]healthcheck.ProxierHealthManager{s.HealthzServer.NewProxierHealthManager(), s.HealthzServer.NewProxierHealthManager()},
 				nodePortAddresses,
 			)
 		} else {
@@ -185,7 +186,7 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.Hostname,
 				s.NodeIP,
 				s.Recorder,
-				s.HealthzServer,
+				s.HealthzServer.NewProxierHealthManager(),
 				nodePortAddresses,
 			)
 		}
@@ -233,7 +234,7 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.Hostname,
 				nodeIPs,
 				s.Recorder,
-				s.HealthzServer,
+				[2]healthcheck.ProxierHealthManager{s.HealthzServer.NewProxierHealthManager(), s.HealthzServer.NewProxierHealthManager()},
 				config.IPVS.Scheduler,
 				nodePortAddresses,
 				kernelHandler,
@@ -265,7 +266,7 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.Hostname,
 				s.NodeIP,
 				s.Recorder,
-				s.HealthzServer,
+				s.HealthzServer.NewProxierHealthManager(),
 				config.IPVS.Scheduler,
 				nodePortAddresses,
 				kernelHandler,

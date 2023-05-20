@@ -618,7 +618,7 @@ type Proxier struct {
 	recorder    events.EventRecorder
 
 	serviceHealthServer healthcheck.ServiceHealthServer
-	healthzServer       healthcheck.ProxierHealthUpdater
+	healthManager       healthcheck.ProxierHealthManager
 
 	hns               HostNetworkService
 	network           hnsNetworkInfo
@@ -672,7 +672,7 @@ func NewProxier(
 	hostname string,
 	nodeIP net.IP,
 	recorder events.EventRecorder,
-	healthzServer healthcheck.ProxierHealthUpdater,
+	healthManager healthcheck.ProxierHealthManager,
 	config config.KubeProxyWinkernelConfiguration,
 	healthzPort int,
 ) (*Proxier, error) {
@@ -685,15 +685,9 @@ func NewProxier(
 		klog.InfoS("ClusterCIDR not specified, unable to distinguish between internal and external traffic")
 	}
 
-	isIPv6 := netutils.IsIPv6(nodeIP)
-	ipFamily := v1.IPv4Protocol
-	if isIPv6 {
-		ipFamily = v1.IPv6Protocol
-	}
-
 	// windows listens to all node addresses
 	nodePortAddresses := proxyutil.NewNodePortAddresses(ipFamily, nil)
-	serviceHealthServer := healthcheck.NewServiceHealthServer(hostname, recorder, nodePortAddresses, healthzServer)
+	serviceHealthServer := healthcheck.NewServiceHealthServer(hostname, recorder, nodePortAddresses, healthManager)
 
 	hns, supportedFeatures := newHostNetworkService()
 	hnsNetworkName, err := getNetworkName(config.NetworkName)
@@ -779,7 +773,7 @@ func NewProxier(
 		nodeIP:                nodeIP,
 		recorder:              recorder,
 		serviceHealthServer:   serviceHealthServer,
-		healthzServer:         healthzServer,
+		healthManager:         healthManager,
 		hns:                   hns,
 		network:               *hnsNetworkInfo,
 		sourceVip:             sourceVip,
@@ -811,21 +805,21 @@ func NewDualStackProxier(
 	hostname string,
 	nodeIP [2]net.IP,
 	recorder events.EventRecorder,
-	healthzServer healthcheck.ProxierHealthUpdater,
+	healthManagers [2]healthcheck.ProxierHealthManager,
 	config config.KubeProxyWinkernelConfiguration,
 	healthzPort int,
 ) (proxy.Provider, error) {
 
 	// Create an ipv4 instance of the single-stack proxier
 	ipv4Proxier, err := NewProxier(syncPeriod, minSyncPeriod,
-		clusterCIDR, hostname, nodeIP[0], recorder, healthzServer, config, healthzPort)
+		clusterCIDR, hostname, nodeIP[0], recorder, healthManagers[0], config, healthzPort)
 
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv4 proxier: %v, hostname: %s, clusterCIDR : %s, nodeIP:%v", err, hostname, clusterCIDR, nodeIP[0])
 	}
 
 	ipv6Proxier, err := NewProxier(syncPeriod, minSyncPeriod,
-		clusterCIDR, hostname, nodeIP[1], recorder, healthzServer, config, healthzPort)
+		clusterCIDR, hostname, nodeIP[1], recorder, healthManagers[1], config, healthzPort)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv6 proxier: %v, hostname: %s, clusterCIDR : %s, nodeIP:%v", err, hostname, clusterCIDR, nodeIP[1])
 	}
@@ -955,8 +949,8 @@ func getHnsNetworkInfo(hnsNetworkName string) (*hnsNetworkInfo, error) {
 
 // Sync is called to synchronize the proxier state to hns as soon as possible.
 func (proxier *Proxier) Sync() {
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.QueuedUpdate()
+	if proxier.healthManager != nil {
+		proxier.healthManager.QueuedUpdate()
 	}
 	metrics.SyncProxyRulesLastQueuedTimestamp.SetToCurrentTime()
 	proxier.syncRunner.Run()
@@ -965,8 +959,8 @@ func (proxier *Proxier) Sync() {
 // SyncLoop runs periodic work.  This is expected to run as a goroutine or as the main loop of the app.  It does not return.
 func (proxier *Proxier) SyncLoop() {
 	// Update healthz timestamp at beginning in case Sync() never succeeds.
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.Updated()
+	if proxier.healthManager != nil {
+		proxier.healthManager.Updated()
 	}
 	// synthesize "last change queued" time as the informers are syncing.
 	metrics.SyncProxyRulesLastQueuedTimestamp.SetToCurrentTime()
@@ -1605,8 +1599,8 @@ func (proxier *Proxier) syncProxyRules() {
 		klog.V(2).InfoS("Policy successfully applied for service", "serviceInfo", svcInfo)
 	}
 
-	if proxier.healthzServer != nil {
-		proxier.healthzServer.Updated()
+	if proxier.healthManager != nil {
+		proxier.healthManager.Updated()
 	}
 	metrics.SyncProxyRulesLastTimestamp.SetToCurrentTime()
 

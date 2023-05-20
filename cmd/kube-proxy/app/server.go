@@ -518,7 +518,7 @@ type ProxyServer struct {
 	Broadcaster   events.EventBroadcaster
 	Recorder      events.EventRecorder
 	NodeRef       *v1.ObjectReference
-	HealthzServer healthcheck.ProxierHealthUpdater
+	HealthzServer healthcheck.ProxyHealthServer
 	Hostname      string
 	NodeIP        net.IP
 
@@ -565,7 +565,7 @@ func newProxyServer(config *kubeproxyconfig.KubeProxyConfiguration, master strin
 	}
 
 	if len(config.HealthzBindAddress) > 0 {
-		s.HealthzServer = healthcheck.NewProxierHealthServer(config.HealthzBindAddress, 2*config.IPTables.SyncPeriod.Duration, s.Recorder, s.NodeRef)
+		s.HealthzServer = healthcheck.NewProxyHealthServer(config.HealthzBindAddress, 2*config.IPTables.SyncPeriod.Duration, s.Recorder, s.NodeRef)
 	}
 
 	s.Proxier, err = s.createProxier(config)
@@ -609,7 +609,7 @@ func createClient(config componentbaseconfig.ClientConnectionConfiguration, mast
 	return client, nil
 }
 
-func serveHealthz(hz healthcheck.ProxierHealthUpdater, errCh chan error) {
+func serveHealthz(hz healthcheck.ProxyHealthServer, errCh chan error) {
 	if hz == nil {
 		return
 	}

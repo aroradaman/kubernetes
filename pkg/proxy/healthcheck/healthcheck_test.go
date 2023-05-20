@@ -415,19 +415,21 @@ func tHandler(hcs *server, nsn types.NamespacedName, status int, endpoints int, 
 	}
 }
 
-func TestHealthzServer(t *testing.T) {
+func TestHealthzServerSingleStack(t *testing.T) {
 	listener := newFakeListener()
 	httpFactory := newFakeHTTPServerFactory()
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	hs := newProxierHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil, nil)
+	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil, nil)
 	server := hs.httpFactory.New(hs.addr, healthzHandler{hs: hs})
+
+	ipv4hm := hs.NewProxierHealthManager()
 
 	// Should return 200 "OK" by default.
 	testHealthzHandler(server, http.StatusOK, t)
 
 	// Should return 200 "OK" after first update
-	hs.Updated()
+	ipv4hm.Updated()
 	testHealthzHandler(server, http.StatusOK, t)
 
 	// Should continue to return 200 "OK" as long as no further updates are queued
@@ -435,14 +437,66 @@ func TestHealthzServer(t *testing.T) {
 	testHealthzHandler(server, http.StatusOK, t)
 
 	// Should return 503 "ServiceUnavailable" if exceed max update-processing time
-	hs.QueuedUpdate()
+	ipv4hm.QueuedUpdate()
 	fakeClock.Step(25 * time.Second)
 	testHealthzHandler(server, http.StatusServiceUnavailable, t)
 
 	// Should return 200 "OK" after processing update
-	hs.Updated()
+	ipv4hm.Updated()
 	fakeClock.Step(5 * time.Second)
 	testHealthzHandler(server, http.StatusOK, t)
+}
+
+func TestHealthzServerDualStack(t *testing.T) {
+	listener := newFakeListener()
+	httpFactory := newFakeHTTPServerFactory()
+	fakeClock := testingclock.NewFakeClock(time.Now())
+
+	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil, nil)
+	server := hs.httpFactory.New(hs.addr, healthzHandler{hs: hs})
+
+	ipv4hm := hs.NewProxierHealthManager()
+	ipv6hm := hs.NewProxierHealthManager()
+
+	// Should return 200 "OK" by default.
+	testHealthzHandler(server, http.StatusOK, t)
+
+	// Should return 200 "OK" after first update
+	ipv4hm.Updated()
+	ipv6hm.Updated()
+	testHealthzHandler(server, http.StatusOK, t)
+
+	// Should continue to return 200 "OK" as long as no further updates are queued
+	fakeClock.Step(25 * time.Second)
+	testHealthzHandler(server, http.StatusOK, t)
+
+	// Should return 503 "ServiceUnavailable" if exceed max update-processing time for both health managers
+	ipv4hm.QueuedUpdate()
+	ipv6hm.QueuedUpdate()
+	fakeClock.Step(25 * time.Second)
+	testHealthzHandler(server, http.StatusServiceUnavailable, t)
+
+	// Should return 200 "OK" after processing update
+	ipv4hm.Updated()
+	ipv6hm.Updated()
+	fakeClock.Step(5 * time.Second)
+	testHealthzHandler(server, http.StatusOK, t)
+
+	// Should return 503 "ServiceUnavailable" if exceed max update-processing time for any of the health manager
+	ipv6hm.QueuedUpdate()
+	fakeClock.Step(25 * time.Second)
+	testHealthzHandler(server, http.StatusServiceUnavailable, t)
+
+	// Should return 200 "OK" after processing update
+	ipv4hm.Updated()
+	ipv6hm.Updated()
+	fakeClock.Step(5 * time.Second)
+	testHealthzHandler(server, http.StatusOK, t)
+
+	// Should return 503 "ServiceUnavailable" if exceed max update-processing time for any of the health manager
+	ipv4hm.QueuedUpdate()
+	fakeClock.Step(25 * time.Second)
+	testHealthzHandler(server, http.StatusServiceUnavailable, t)
 }
 
 func testHealthzHandler(server httpServer, status int, t *testing.T) {

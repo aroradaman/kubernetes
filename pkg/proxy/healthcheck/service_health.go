@@ -56,7 +56,7 @@ type proxierHealthChecker interface {
 	IsHealthy() bool
 }
 
-func newServiceHealthServer(hostname string, recorder events.EventRecorder, listener listener, factory httpServerFactory, nodePortAddresses *proxyutil.NodePortAddresses, healthzServer proxierHealthChecker) ServiceHealthServer {
+func newServiceHealthServer(hostname string, recorder events.EventRecorder, listener listener, factory httpServerFactory, nodePortAddresses *proxyutil.NodePortAddresses, proxierHealthChecker proxierHealthChecker) ServiceHealthServer {
 	// It doesn't matter whether we listen on "0.0.0.0", "::", or ""; go
 	// treats them all the same.
 	nodeIPs := []net.IP{net.IPv4zero}
@@ -71,19 +71,19 @@ func newServiceHealthServer(hostname string, recorder events.EventRecorder, list
 	}
 
 	return &server{
-		hostname:      hostname,
-		recorder:      recorder,
-		listener:      listener,
-		httpFactory:   factory,
-		healthzServer: healthzServer,
-		services:      map[types.NamespacedName]*hcInstance{},
-		nodeIPs:       nodeIPs,
+		hostname:             hostname,
+		recorder:             recorder,
+		listener:             listener,
+		httpFactory:          factory,
+		proxierHealthChecker: proxierHealthChecker,
+		services:             map[types.NamespacedName]*hcInstance{},
+		nodeIPs:              nodeIPs,
 	}
 }
 
 // NewServiceHealthServer allocates a new service healthcheck server manager
-func NewServiceHealthServer(hostname string, recorder events.EventRecorder, nodePortAddresses *proxyutil.NodePortAddresses, healthzServer proxierHealthChecker) ServiceHealthServer {
-	return newServiceHealthServer(hostname, recorder, stdNetListener{}, stdHTTPServerFactory{}, nodePortAddresses, healthzServer)
+func NewServiceHealthServer(hostname string, recorder events.EventRecorder, nodePortAddresses *proxyutil.NodePortAddresses, proxierHealthChecker proxierHealthChecker) ServiceHealthServer {
+	return newServiceHealthServer(hostname, recorder, stdNetListener{}, stdHTTPServerFactory{}, nodePortAddresses, proxierHealthChecker)
 }
 
 type server struct {
@@ -94,7 +94,7 @@ type server struct {
 	listener    listener
 	httpFactory httpServerFactory
 
-	healthzServer proxierHealthChecker
+	proxierHealthChecker proxierHealthChecker
 
 	lock     sync.RWMutex
 	services map[types.NamespacedName]*hcInstance
@@ -229,7 +229,7 @@ func (h hcHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	}
 	count := svc.endpoints
 	h.hcs.lock.RUnlock()
-	kubeProxyHealthy := h.hcs.healthzServer.IsHealthy()
+	kubeProxyHealthy := h.hcs.proxierHealthChecker.IsHealthy()
 
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Header().Set("X-Content-Type-Options", "nosniff")

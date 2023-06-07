@@ -420,7 +420,7 @@ func TestHealthzServerSingleStack(t *testing.T) {
 	httpFactory := newFakeHTTPServerFactory()
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil, nil)
+	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil)
 	server := hs.httpFactory.New(hs.addr, healthzHandler{hs: hs})
 
 	ipv4hm := hs.NewProxierHealthManager()
@@ -452,7 +452,7 @@ func TestHealthzServerDualStack(t *testing.T) {
 	httpFactory := newFakeHTTPServerFactory()
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil, nil)
+	hs := newProxyHealthServer(listener, httpFactory, fakeClock, "127.0.0.1:10256", 10*time.Second, nil)
 	server := hs.httpFactory.New(hs.addr, healthzHandler{hs: hs})
 
 	ipv4hm := hs.NewProxierHealthManager()

@@ -19,9 +19,7 @@ package healthcheck
 import (
 	"fmt"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
-	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/utils/clock"
 	"net/http"
 	"time"
@@ -48,25 +46,23 @@ type proxyHealthServer struct {
 
 	addr          string
 	healthTimeout time.Duration
-	recorder      events.EventRecorder
 	nodeRef       *v1.ObjectReference
 
 	proxierHealthManagers []ProxierHealthManager
 }
 
 // NewProxyHealthServer returns a proxier health http server.
-func NewProxyHealthServer(addr string, healthTimeout time.Duration, recorder events.EventRecorder, nodeRef *v1.ObjectReference) ProxyHealthServer {
-	return newProxyHealthServer(stdNetListener{}, stdHTTPServerFactory{}, clock.RealClock{}, addr, healthTimeout, recorder, nodeRef)
+func NewProxyHealthServer(addr string, healthTimeout time.Duration, nodeRef *v1.ObjectReference) ProxyHealthServer {
+	return newProxyHealthServer(stdNetListener{}, stdHTTPServerFactory{}, clock.RealClock{}, addr, healthTimeout, nodeRef)
 }
 
-func newProxyHealthServer(listener listener, httpServerFactory httpServerFactory, c clock.Clock, addr string, healthTimeout time.Duration, recorder events.EventRecorder, nodeRef *v1.ObjectReference) *proxyHealthServer {
+func newProxyHealthServer(listener listener, httpServerFactory httpServerFactory, c clock.Clock, addr string, healthTimeout time.Duration, nodeRef *v1.ObjectReference) *proxyHealthServer {
 	return &proxyHealthServer{
 		listener:              listener,
 		httpFactory:           httpServerFactory,
 		clock:                 c,
 		addr:                  addr,
 		healthTimeout:         healthTimeout,
-		recorder:              recorder,
 		nodeRef:               nodeRef,
 		proxierHealthManagers: make([]ProxierHealthManager, 0),
 	}
@@ -106,10 +102,6 @@ func (hs *proxyHealthServer) Run() error {
 	listener, err := hs.listener.Listen(hs.addr)
 	if err != nil {
 		msg := fmt.Sprintf("failed to start proxier healthz on %s: %v", hs.addr, err)
-		// TODO(thockin): move eventing back to caller
-		if hs.recorder != nil {
-			hs.recorder.Eventf(hs.nodeRef, nil, api.EventTypeWarning, "FailedToStartProxierHealthcheck", "StartKubeProxy", msg)
-		}
 		return fmt.Errorf("%v", msg)
 	}
 

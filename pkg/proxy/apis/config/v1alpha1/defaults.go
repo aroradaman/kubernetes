@@ -109,6 +109,19 @@ func SetDefaults_KubeProxyConfiguration(obj *kubeproxyconfigv1alpha1.KubeProxyCo
 		// typical server timeouts.
 		obj.Conntrack.TCPCloseWaitTimeout = &metav1.Duration{Duration: 1 * time.Hour}
 	}
+
+	if obj.Conntrack.TCPBeLiberal == nil {
+		obj.Conntrack.TCPBeLiberal = pointer.Int32(-1)
+	}
+
+	if obj.Conntrack.UDPTimeout == nil {
+		obj.Conntrack.UDPTimeout = &metav1.Duration{Duration: 0 * time.Second}
+	}
+
+	if obj.Conntrack.UDPStreamTimeout == nil {
+		obj.Conntrack.UDPStreamTimeout = &metav1.Duration{Duration: 0 * time.Second}
+	}
+
 	if obj.ConfigSyncPeriod.Duration == 0 {
 		obj.ConfigSyncPeriod.Duration = 15 * time.Minute
 	}

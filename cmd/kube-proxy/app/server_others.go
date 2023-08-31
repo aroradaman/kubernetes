@@ -329,6 +329,27 @@ func (s *ProxyServer) setupConntrack() error {
 		}
 	}
 
+	if s.Config.Conntrack.TCPBeLiberal != nil && *s.Config.Conntrack.TCPBeLiberal >= 0 {
+		value := int(*s.Config.Conntrack.TCPBeLiberal)
+		if err := ct.SetTCPBeLiberal(value); err != nil {
+			return err
+		}
+	}
+
+	if s.Config.Conntrack.UDPTimeout != nil && s.Config.Conntrack.UDPTimeout.Duration > 0 {
+		timeout := int(s.Config.Conntrack.UDPTimeout.Duration / time.Second)
+		if err := ct.SetUDPTimeout(timeout); err != nil {
+			return err
+		}
+	}
+
+	if s.Config.Conntrack.UDPStreamTimeout != nil && s.Config.Conntrack.UDPStreamTimeout.Duration > 0 {
+		timeout := int(s.Config.Conntrack.UDPStreamTimeout.Duration / time.Second)
+		if err := ct.SetUDPStreamTimeout(timeout); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

@@ -34,6 +34,7 @@ func TestDefaultsKubeProxyConfiguration(t *testing.T) {
 	oomScore := int32(-999)
 	ctMaxPerCore := int32(32768)
 	ctMin := int32(131072)
+	ctTCPBeLiberal := int32(-1)
 	testCases := []struct {
 		name     string
 		original *kubeproxyconfigv1alpha1.KubeProxyConfiguration
@@ -68,6 +69,9 @@ func TestDefaultsKubeProxyConfiguration(t *testing.T) {
 					Min:                   &ctMin,
 					TCPEstablishedTimeout: &metav1.Duration{Duration: 24 * time.Hour},
 					TCPCloseWaitTimeout:   &metav1.Duration{Duration: 1 * time.Hour},
+					TCPBeLiberal:          &ctTCPBeLiberal,
+					UDPTimeout:            &metav1.Duration{Duration: 0 * time.Second},
+					UDPStreamTimeout:      &metav1.Duration{Duration: 0 * time.Second},
 				},
 				ConfigSyncPeriod: metav1.Duration{Duration: 15 * time.Minute},
 				Logging: logsapi.LoggingConfiguration{
@@ -108,6 +112,9 @@ func TestDefaultsKubeProxyConfiguration(t *testing.T) {
 					Min:                   &ctMin,
 					TCPEstablishedTimeout: &metav1.Duration{Duration: 24 * time.Hour},
 					TCPCloseWaitTimeout:   &metav1.Duration{Duration: 1 * time.Hour},
+					TCPBeLiberal:          &ctTCPBeLiberal,
+					UDPTimeout:            &metav1.Duration{Duration: 0 * time.Second},
+					UDPStreamTimeout:      &metav1.Duration{Duration: 0 * time.Second},
 				},
 				ConfigSyncPeriod: metav1.Duration{Duration: 15 * time.Minute},
 				Logging: logsapi.LoggingConfiguration{

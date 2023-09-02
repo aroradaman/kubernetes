@@ -55,8 +55,11 @@ configSyncPeriod: 15s
 conntrack:
   maxPerCore: 2
   min: 1
+  tcpBeLiberal: true
   tcpCloseWaitTimeout: 10s
   tcpEstablishedTimeout: 20s
+  udpStreamTimeout: 600s
+  udpTimeout: 120s
 healthzBindAddress: "%s"
 hostnameOverride: "foo"
 iptables:
@@ -199,6 +202,9 @@ nodePortAddresses:
 				Min:                   pointer.Int32(1),
 				TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
 				TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
+				TCPBeLiberal:          pointer.Bool(true),
+				UDPTimeout:            &metav1.Duration{Duration: 120 * time.Second},
+				UDPStreamTimeout:      &metav1.Duration{Duration: 600 * time.Second},
 			},
 			FeatureGates:       map[string]bool{},
 			HealthzBindAddress: tc.healthzBindAddress,

@@ -39,6 +39,9 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 			obj.Conntrack.Min = pointer.Int32(c.Int31())
 			obj.Conntrack.TCPCloseWaitTimeout = &metav1.Duration{Duration: time.Duration(c.Int63()) * time.Hour}
 			obj.Conntrack.TCPEstablishedTimeout = &metav1.Duration{Duration: time.Duration(c.Int63()) * time.Hour}
+			obj.Conntrack.TCPBeLiberal = pointer.Bool(c.RandBool())
+			obj.Conntrack.UDPTimeout = &metav1.Duration{Duration: time.Duration(c.Int63()) * time.Hour}
+			obj.Conntrack.UDPStreamTimeout = &metav1.Duration{Duration: time.Duration(c.Int63()) * time.Hour}
 			obj.FeatureGates = map[string]bool{c.RandString(): true}
 			obj.HealthzBindAddress = fmt.Sprintf("%d.%d.%d.%d:%d", c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(65536))
 			obj.IPTables.MasqueradeBit = pointer.Int32(c.Int31())

@@ -17,12 +17,11 @@ limitations under the License.
 package sysctl
 
 import (
-	"fmt"
 	goruntime "runtime"
 
 	"k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/proxy/ipvs"
+	utilkernel "k8s.io/kubernetes/pkg/util/kernel"
 )
 
 // refer to https://github.com/torvalds/linux/commit/122ff243f5f104194750ecbc76d5946dd1eec934.
@@ -53,7 +52,7 @@ var safeSysctlsIncludeReservedPorts = []string{
 func SafeSysctlAllowlist() []string {
 	if goruntime.GOOS == "linux" {
 		// make sure we're on a new enough kernel that the ip_local_reserved_ports sysctl is namespaced
-		kernelVersion, err := getKernelVersion()
+		kernelVersion, err := utilkernel.GetVersion()
 		if err != nil {
 			klog.ErrorS(err, "Failed to get kernel version, dropping net.ipv4.ip_local_reserved_ports from safe sysctl list")
 			return safeSysctls
@@ -64,16 +63,4 @@ func SafeSysctlAllowlist() []string {
 		}
 	}
 	return safeSysctlsIncludeReservedPorts
-}
-
-func getKernelVersion() (*version.Version, error) {
-	kernelVersionStr, err := ipvs.NewLinuxKernelHandler().GetKernelVersion()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get kernel version: %w", err)
-	}
-	kernelVersion, err := version.ParseGeneric(kernelVersionStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse kernel version: %w", err)
-	}
-	return kernelVersion, nil
 }

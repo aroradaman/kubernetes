@@ -208,7 +208,6 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 			return nil, fmt.Errorf("unable to create proxier: %v", err)
 		}
 	} else if config.Mode == proxyconfigapi.ProxyModeIPVS {
-		kernelHandler := ipvs.NewLinuxKernelHandler()
 		ipsetInterface := utilipset.New(execer)
 		ipvsInterface := utilipvs.New()
 		if err := ipvs.CanUseIPVSProxier(ipvsInterface, ipsetInterface, config.IPVS.Scheduler); err != nil {
@@ -246,7 +245,6 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.HealthzServer,
 				config.IPVS.Scheduler,
 				config.NodePortAddresses,
-				kernelHandler,
 			)
 		} else {
 			var localDetector proxyutiliptables.LocalTrafficDetector
@@ -278,7 +276,6 @@ func (s *ProxyServer) createProxier(config *proxyconfigapi.KubeProxyConfiguratio
 				s.HealthzServer,
 				config.IPVS.Scheduler,
 				config.NodePortAddresses,
-				kernelHandler,
 			)
 		}
 		if err != nil {

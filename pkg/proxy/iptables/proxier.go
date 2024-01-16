@@ -394,6 +394,8 @@ var iptablesKubeletJumpChains = []iptablesJumpChain{
 // on upgrade.
 var iptablesCleanupOnlyChains = []iptablesJumpChain{}
 
+var conntrackStateInvalidDropRule = fmt.Sprintf("-A %s -m conntrack --ctstate INVALID -j DROP", kubeForwardChain)
+
 // CleanupLeftovers removes all iptables rules and chains created by the Proxier
 // It returns true if an error was encountered. Errors are logged.
 func CleanupLeftovers(ipt utiliptables.Interface) (encounteredError bool) {
@@ -413,7 +415,7 @@ func CleanupLeftovers(ipt utiliptables.Interface) (encounteredError bool) {
 
 	// Flush and remove all of our "-t nat" chains.
 	iptablesData := bytes.NewBuffer(nil)
-	if err := ipt.SaveInto(utiliptables.TableNAT, iptablesData); err != nil {
+	if err := ipt.SaveInto(utiliptables.TableNAT, iptablesData, utiliptables.NoSaveCounters); err != nil {
 		klog.ErrorS(err, "Failed to execute iptables-save", "table", utiliptables.TableNAT)
 		encounteredError = true
 	} else {
@@ -450,7 +452,7 @@ func CleanupLeftovers(ipt utiliptables.Interface) (encounteredError bool) {
 
 	// Flush and remove all of our "-t filter" chains.
 	iptablesData.Reset()
-	if err := ipt.SaveInto(utiliptables.TableFilter, iptablesData); err != nil {
+	if err := ipt.SaveInto(utiliptables.TableFilter, iptablesData, utiliptables.NoSaveCounters); err != nil {
 		klog.ErrorS(err, "Failed to execute iptables-save", "table", utiliptables.TableFilter)
 		encounteredError = true
 	} else {
@@ -1375,7 +1377,7 @@ func (proxier *Proxier) syncProxyRules() {
 	deletedChains := 0
 	if !proxier.largeClusterMode || time.Since(proxier.lastIPTablesCleanup) > proxier.syncPeriod {
 		proxier.iptablesData.Reset()
-		if err := proxier.iptables.SaveInto(utiliptables.TableNAT, proxier.iptablesData); err == nil {
+		if err := proxier.iptables.SaveInto(utiliptables.TableNAT, proxier.iptablesData, utiliptables.NoSaveCounters); err == nil {
 			existingNATChains := utiliptables.GetChainsFromTable(proxier.iptablesData.Bytes())
 			for chain := range existingNATChains.Difference(activeNATChains) {
 				chainString := string(chain)
@@ -1393,6 +1395,20 @@ func (proxier *Proxier) syncProxyRules() {
 			proxier.lastIPTablesCleanup = time.Now()
 		} else {
 			klog.ErrorS(err, "Failed to execute iptables-save: stale chains will not be deleted")
+		}
+	}
+
+	// fetch number of packets dropped by iptables which were marked INVALID by conntrack.
+	if !proxier.conntrackTCPLiberal {
+		proxier.iptablesData.Reset()
+		if err := proxier.iptables.SaveInto(utiliptables.TableFilter, proxier.iptablesData, utiliptables.SaveCounters); err == nil {
+			pCounter, bCounter, err := utiliptables.GetCountersForRule(proxier.iptablesData.Bytes(), conntrackStateInvalidDropRule)
+			if err != nil {
+				klog.ErrorS(err, "Failed to get counter for conntrack state invalid drop rule")
+			} else {
+				klog.InfoS("Fetched counter for conntrack state invalid drop rule", "packets", pCounter, "bytes", bCounter)
+				metrics.IptablesCTInvalidDroppedPackets.Add(float64(pCounter))
+			}
 		}
 	}
 
@@ -1443,12 +1459,7 @@ func (proxier *Proxier) syncProxyRules() {
 	// Ref: https://github.com/kubernetes/kubernetes/issues/74839
 	// Ref: https://github.com/kubernetes/kubernetes/issues/117924
 	if !proxier.conntrackTCPLiberal {
-		proxier.filterRules.Write(
-			"-A", string(kubeForwardChain),
-			"-m", "conntrack",
-			"--ctstate", "INVALID",
-			"-j", "DROP",
-		)
+		proxier.filterRules.Write(conntrackStateInvalidDropRule)
 	}
 
 	// If the masqueradeMark has been added then we want to forward that same

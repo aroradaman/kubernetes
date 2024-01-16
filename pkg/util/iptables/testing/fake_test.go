@@ -33,7 +33,7 @@ func TestFakeIPTables(t *testing.T) {
 	fake := NewFake()
 	buf := bytes.NewBuffer(nil)
 
-	err := fake.SaveInto("", buf)
+	err := fake.SaveInto("", buf, iptables.NoSaveCounters)
 	if err != nil {
 		t.Fatalf("unexpected error from SaveInto: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestFakeIPTables(t *testing.T) {
 
 	// Sanity-check...
 	buf.Reset()
-	err = fake.SaveInto("", buf)
+	err = fake.SaveInto("", buf, iptables.NoSaveCounters)
 	if err != nil {
 		t.Fatalf("unexpected error from SaveInto: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestFakeIPTables(t *testing.T) {
 
 	// We used NoFlushTables, so this should leave KUBE-TEST unchanged
 	buf.Reset()
-	err = fake.SaveInto("", buf)
+	err = fake.SaveInto("", buf, iptables.NoSaveCounters)
 	if err != nil {
 		t.Fatalf("unexpected error from SaveInto: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestFakeIPTables(t *testing.T) {
 	}
 
 	buf.Reset()
-	err = fake.SaveInto("", buf)
+	err = fake.SaveInto("", buf, iptables.NoSaveCounters)
 	if err != nil {
 		t.Fatalf("unexpected error from SaveInto: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestFakeIPTables(t *testing.T) {
 	}
 
 	buf.Reset()
-	err = fake.SaveInto("", buf)
+	err = fake.SaveInto("", buf, iptables.NoSaveCounters)
 	if err != nil {
 		t.Fatalf("unexpected error from SaveInto: %v", err)
 	}

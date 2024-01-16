@@ -68,7 +68,7 @@ type Interface interface {
 	// Protocol returns the IP family this instance is managing,
 	Protocol() Protocol
 	// SaveInto calls `iptables-save` for table and stores result in a given buffer.
-	SaveInto(table Table, buffer *bytes.Buffer) error
+	SaveInto(table Table, buffer *bytes.Buffer, counters SaveCountersFlag) error
 	// Restore runs `iptables-restore` passing data through []byte.
 	// table is the Table to restore
 	// data should be formatted like the output of SaveInto()
@@ -154,6 +154,15 @@ const RestoreCounters RestoreCountersFlag = true
 
 // NoRestoreCounters a boolean false constant for the option flag RestoreCountersFlag
 const NoRestoreCounters RestoreCountersFlag = false
+
+// SaveCountersFlag is an option flag for Restore
+type SaveCountersFlag bool
+
+// SaveCounters a boolean true constant for the option flag SaveCountersFlag
+const SaveCounters SaveCountersFlag = true
+
+// NoSaveCounters a boolean false constant for the option flag SaveCountersFlag
+const NoSaveCounters SaveCountersFlag = false
 
 // FlushFlag an option flag for Flush
 type FlushFlag bool
@@ -348,7 +357,7 @@ func (runner *runner) Protocol() Protocol {
 }
 
 // SaveInto is part of Interface.
-func (runner *runner) SaveInto(table Table, buffer *bytes.Buffer) error {
+func (runner *runner) SaveInto(table Table, buffer *bytes.Buffer, counters SaveCountersFlag) error {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 
@@ -358,6 +367,9 @@ func (runner *runner) SaveInto(table Table, buffer *bytes.Buffer) error {
 	// run and return
 	iptablesSaveCmd := iptablesSaveCommand(runner.protocol)
 	args := []string{"-t", string(table)}
+	if counters {
+		args = append(args, "--counters")
+	}
 	klog.V(4).InfoS("Running", "command", iptablesSaveCmd, "arguments", args)
 	cmd := runner.exec.Command(iptablesSaveCmd, args...)
 	cmd.SetStdout(buffer)

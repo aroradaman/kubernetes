@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/lithammer/dedent"
+	"github.com/stretchr/testify/assert"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -99,4 +100,90 @@ func TestGetChainsFromTable(t *testing.T) {
 		Chain("KUBE-SVC-6666666666666666"),
 	)
 	checkChains(t, []byte(iptablesSave), expected)
+}
+
+func TestGetCountersForRule(t *testing.T) {
+	iptablesSave := dedent.Dedent(`
+		*filter
+		:INPUT ACCEPT [0:0]
+		:FORWARD ACCEPT [0:0]
+		:OUTPUT ACCEPT [0:0]
+		:KUBE-EXTERNAL-SERVICES - [0:0]
+		:KUBE-FIREWALL - [0:0]
+		:KUBE-FORWARD - [0:0]
+		:KUBE-KUBELET-CANARY - [0:0]
+		:KUBE-NODEPORTS - [0:0]
+		:KUBE-PROXY-CANARY - [0:0]
+		:KUBE-PROXY-FIREWALL - [0:0]
+		:KUBE-SERVICES - [0:0]
+		[10:766] -A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes load balancer firewall" -j KUBE-PROXY-FIREWALL
+		[4100:5909824] -A INPUT -m comment --comment "kubernetes health check service ports" -j KUBE-NODEPORTS
+		[10:766] -A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes externally-visible service portals" -j KUBE-EXTERNAL-SERVICES
+		[4367:6069946] -A INPUT -j KUBE-FIREWALL
+		[0:0] -A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes load balancer firewall" -j KUBE-PROXY-FIREWALL
+		[0:0] -A FORWARD -m comment --comment "kubernetes forwarding rules" -j KUBE-FORWARD
+		[0:0] -A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+		[0:0] -A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes externally-visible service portals" -j KUBE-EXTERNAL-SERVICES
+		[12:886] -A OUTPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes load balancer firewall" -j KUBE-PROXY-FIREWALL
+		[12:886] -A OUTPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+		[4559:477380] -A OUTPUT -j KUBE-FIREWALL
+		[0:0] -A KUBE-FIREWALL ! -s 127.0.0.0/8 -d 127.0.0.0/8 -m comment --comment "block incoming localnet connections" -m conntrack ! --ctstate RELATED,ESTABLISHED,DNAT -j DROP
+		[24:1772] -A KUBE-FORWARD -m conntrack --ctstate INVALID -j DROP
+		[0:0] -A KUBE-FORWARD -m comment --comment "kubernetes forwarding rules" -j ACCEPT
+		-A KUBE-FORWARD -m comment --comment "kubernetes forwarding conntrack rule" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+	`)
+
+	testCases := []struct {
+		name     string
+		pCounter int
+		bCounter int
+		rule     string
+		err      string
+	}{
+		{
+			name:     "valid rule 1",
+			pCounter: 4559,
+			bCounter: 477380,
+			rule:     "-A OUTPUT -j KUBE-FIREWALL",
+		},
+		{
+			name:     "valid rule 2",
+			pCounter: 4100,
+			bCounter: 5909824,
+			rule:     "-A INPUT -m comment --comment \"kubernetes health check service ports\" -j KUBE-NODEPORTS",
+		},
+		{
+			name:     "valid rule 3",
+			pCounter: 24,
+			bCounter: 1772,
+			rule:     "-A KUBE-FORWARD -m conntrack --ctstate INVALID -j DROP",
+		},
+		{
+			name:     "rule not found",
+			pCounter: 0,
+			bCounter: 0,
+			rule:     "-A KUBE-NON-EXISTENT-CHAIN -m conntrack --ctstate INVALID -j DROP",
+			err:      "rule not found",
+		},
+		{
+			name:     "iptables-save without counter",
+			rule:     "-A KUBE-FORWARD -m comment --comment \"kubernetes forwarding conntrack rule\" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+			pCounter: 0,
+			bCounter: 0,
+			err:      "counter not preset in iptables-save output",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			pCounter, bCounter, err := GetCountersForRule([]byte(iptablesSave), testCase.rule)
+			if len(testCase.err) > 0 {
+				assert.ErrorContains(t, err, testCase.err)
+			} else {
+				assert.NoError(t, err)
+			}
+			assert.Equal(t, testCase.pCounter, pCounter)
+			assert.Equal(t, testCase.bCounter, bCounter)
+		})
+	}
 }

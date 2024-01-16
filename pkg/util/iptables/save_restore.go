@@ -22,6 +22,7 @@ package iptables
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -54,4 +55,41 @@ func GetChainsFromTable(save []byte) sets.Set[Chain] {
 		save = save[end:]
 	}
 	return chainsSet
+}
+
+// GetCountersForRule parse and returns packet and byte counters associated with the rule.
+func GetCountersForRule(save []byte, rule string) (int, int, error) {
+	// \[(\d+):(\d+)] -A KUBE-FORWARD -m conntrack --ctstate INVALID -j DROP
+	var err error
+	index := bytes.Index(save, []byte(rule))
+	pCounter, bCounter := 0, 0
+	if index == -1 {
+		return pCounter, bCounter, fmt.Errorf("rule not found")
+	}
+
+	start, end := index, index
+	exit := false
+	for start >= 0 && !exit {
+		if start > 0 && save[start-1] == '-' && save[start] == 'A' {
+			return 0, 0, fmt.Errorf("counter not preset in iptables-save output")
+		}
+		switch save[start] {
+		case ']':
+			end = start
+		case ':':
+			bCounter, err = strconv.Atoi(string(save[start+1 : end]))
+			if err != nil {
+				return 0, 0, err
+			}
+			end = start
+		case '[':
+			pCounter, err = strconv.Atoi(string(save[start+1 : end]))
+			if err != nil {
+				return 0, 0, err
+			}
+			exit = true
+		}
+		start--
+	}
+	return pCounter, bCounter, nil
 }

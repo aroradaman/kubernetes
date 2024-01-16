@@ -205,7 +205,7 @@ func (f *FakeIPTables) saveTable(table iptables.Table, buffer *bytes.Buffer) err
 }
 
 // SaveInto is part of iptables.Interface
-func (f *FakeIPTables) SaveInto(table iptables.Table, buffer *bytes.Buffer) error {
+func (f *FakeIPTables) SaveInto(table iptables.Table, buffer *bytes.Buffer, _ iptables.SaveCountersFlag) error {
 	if table == "" {
 		// As a secret extension to the API, FakeIPTables treats table="" as
 		// meaning "all tables"

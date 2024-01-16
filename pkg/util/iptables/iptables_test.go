@@ -793,7 +793,7 @@ COMMIT
 	buffer := bytes.NewBuffer(nil)
 
 	// Success.
-	err := runner.SaveInto(TableNAT, buffer)
+	err := runner.SaveInto(TableNAT, buffer, NoSaveCounters)
 	if err != nil {
 		t.Fatalf("%s: Expected success, got %v", protocol, err)
 	}
@@ -814,7 +814,7 @@ COMMIT
 
 	// Failure.
 	buffer.Reset()
-	err = runner.SaveInto(TableNAT, buffer)
+	err = runner.SaveInto(TableNAT, buffer, NoSaveCounters)
 	if err == nil {
 		t.Errorf("%s: Expected failure", protocol)
 	}

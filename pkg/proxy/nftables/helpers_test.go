@@ -22,6 +22,7 @@ package nftables
 import (
 	"context"
 	"fmt"
+	"net"
 	"regexp"
 	"runtime"
 	"sort"
@@ -569,6 +570,7 @@ func (tracer *nftablesTracer) runChain(chname, sourceIP, protocol, destIP, destP
 // destinations (a comma-separated list of IPs, or one of the special targets "ACCEPT",
 // "DROP", or "REJECT"), and whether the packet would be masqueraded.
 func tracePacket(t *testing.T, nft *knftables.Fake, sourceIP, protocol, destIP, destPort string, nodeIPs []string) ([]string, string, bool) {
+	var err error
 	tracer := newNFTablesTracer(t, nft, nodeIPs)
 
 	// filter-prerouting goes first, then nat-prerouting if not terminated.
@@ -579,11 +581,19 @@ func tracePacket(t *testing.T, nft *knftables.Fake, sourceIP, protocol, destIP, 
 	// After the prerouting rules run, pending DNATs are processed (which would affect
 	// the destination IP that later rules match against).
 	if len(tracer.outputs) != 0 {
-		destIP = strings.Split(tracer.outputs[0], ":")[0]
+		destIP, _, err = net.SplitHostPort(tracer.outputs[0])
+		if err != nil {
+			t.Errorf("failed to parse host port '%s': %s", tracer.outputs[0], err.Error())
+		}
 	}
 
-	// Run filter-forward, skip filter-input as it ought to be fully redundant with the filter-forward chain.
-	tracer.runChain("filter-forward", sourceIP, protocol, destIP, destPort)
+	// Run filter-forward, return if packet is terminated.
+	if tracer.runChain("filter-forward", sourceIP, protocol, destIP, destPort) {
+		return tracer.matches, strings.Join(tracer.outputs, ", "), tracer.markMasq
+	}
+
+	// Run filter-input
+	tracer.runChain("filter-input", sourceIP, protocol, destIP, destPort)
 
 	// Skip filter-output and nat-output as they ought to be fully redundant with the prerouting chains.
 	// Skip nat-postrouting because it only does masquerading and we handle that separately.

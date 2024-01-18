@@ -86,10 +86,11 @@ const (
 	kubeClusterIPsSet = "cluster-ips"
 
 	// handling for services with no endpoints
-	kubeEndpointsCheckChain    = "endpoints-check"
-	kubeNoEndpointServicesMap  = "no-endpoint-services"
-	kubeNoEndpointNodePortsMap = "no-endpoint-nodeports"
-	kubeRejectChain            = "reject-chain"
+	kubeServiceEndpointsCheckChain  = "service-endpoints-check"
+	kubeNodePortEndpointsCheckChain = "nodeport-endpoints-check"
+	kubeNoEndpointServicesMap       = "no-endpoint-services"
+	kubeNoEndpointNodePortsMap      = "no-endpoint-nodeports"
+	kubeRejectChain                 = "reject-chain"
 
 	// handling traffic to unused ClusterIPs and invalid
 	// ports of ClusterIPs
@@ -352,9 +353,10 @@ var nftablesJumpChains = []nftablesJumpChain{
 	// We can't jump to kubeEndpointsCheckChain from filter-prerouting like
 	// kubeFirewallCheckChain because reject action is only valid in chains using the
 	// input, forward or output hooks.
-	{kubeEndpointsCheckChain, kubeFilterInput, "ct state new"},
-	{kubeEndpointsCheckChain, kubeFilterForward, "ct state new"},
-	{kubeEndpointsCheckChain, kubeFilterOutput, "ct state new"},
+	{kubeNodePortEndpointsCheckChain, kubeFilterInput, "ct state new"},
+	{kubeServiceEndpointsCheckChain, kubeFilterInput, "ct state new"},
+	{kubeServiceEndpointsCheckChain, kubeFilterForward, "ct state new"},
+	{kubeServiceEndpointsCheckChain, kubeFilterOutput, "ct state new"},
 
 	{kubeFirewallCheckChain, kubeFilterPreRouting, "ct state new"},
 	{kubeFirewallCheckChain, kubeFilterOutput, "ct state new"},
@@ -540,7 +542,7 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 	})
 
 	tx.Add(&knftables.Rule{
-		Chain: kubeEndpointsCheckChain,
+		Chain: kubeServiceEndpointsCheckChain,
 		Rule: knftables.Concat(
 			ipX, "daddr", ".", "meta l4proto", ".", "th dport",
 			"vmap", "@", kubeNoEndpointServicesMap,
@@ -549,9 +551,8 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 
 	if proxier.nodePortAddresses.MatchAll() {
 		tx.Add(&knftables.Rule{
-			Chain: kubeEndpointsCheckChain,
+			Chain: kubeNodePortEndpointsCheckChain,
 			Rule: knftables.Concat(
-				"fib daddr type local",
 				noLocalhost,
 				"meta l4proto . th dport",
 				"vmap", "@", kubeNoEndpointNodePortsMap,
@@ -559,7 +560,7 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 		})
 	} else {
 		tx.Add(&knftables.Rule{
-			Chain: kubeEndpointsCheckChain,
+			Chain: kubeNodePortEndpointsCheckChain,
 			Rule: knftables.Concat(
 				ipX, "daddr", "@", kubeNodePortIPsSet,
 				"meta l4proto . th dport",

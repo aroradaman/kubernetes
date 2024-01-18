@@ -51,7 +51,7 @@ the forward path.
 
 ## kube-proxy's use of nftables hooks
 
-Kube-proxy uses nftables for four things:
+Kube-proxy uses nftables for six things:
 
   - Using DNAT to rewrite traffic from service IPs (cluster IPs, external IPs, load balancer
     IP, and NodePorts on node IPs) to the corresponding endpoint IPs.
@@ -64,6 +64,10 @@ Kube-proxy uses nftables for four things:
   - Dropping packets for services with `Local` traffic policy but no local endpoints.
 
   - Rejecting packets for services with no local or remote endpoints.
+ 
+  - Dropping packets to ClusterIPs which are not yet assigned.
+
+  - Rejecting packets to undefined ports of ClusterIPs.
 
 This is implemented as follows:
 

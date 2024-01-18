@@ -55,6 +55,7 @@ import (
 	proxyutiliptables "k8s.io/kubernetes/pkg/proxy/util/iptables"
 	"k8s.io/kubernetes/pkg/util/async"
 	utilexec "k8s.io/utils/exec"
+	netutils "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 )
 
@@ -62,6 +63,16 @@ const (
 	// Our nftables table. All of our chains/sets/maps are created inside this table,
 	// so they don't need any "kube-" or "kube-proxy-" prefix of their own.
 	kubeProxyTable = "kube-proxy"
+
+	// base chains
+	kubeFilterPreRouting     = "filter-prerouting"
+	kubeFilterInput          = "filter-input"
+	kubeFilterForward        = "filter-forward"
+	kubeFilterOutput         = "filter-output"
+	KubeFilterOutputPostDNAT = "filter-output-post-dnat"
+	kubeNATPreRouting        = "nat-prerouting"
+	kubeNATOutput            = "nat-output"
+	kubeNATPostRouting       = "nat-postrouting"
 
 	// service dispatch
 	kubeServicesChain       = "services"
@@ -71,11 +82,18 @@ const (
 	// set of IPs that accept NodePort traffic
 	kubeNodePortIPsSet = "nodeport-ips"
 
+	// set of active ClusterIPs.
+	kubeClusterIPsSet = "cluster-ips"
+
 	// handling for services with no endpoints
 	kubeEndpointsCheckChain    = "endpoints-check"
 	kubeNoEndpointServicesMap  = "no-endpoint-services"
 	kubeNoEndpointNodePortsMap = "no-endpoint-nodeports"
 	kubeRejectChain            = "reject-chain"
+
+	// handling traffic to unused ClusterIPs and invalid
+	// ports of ClusterIPs
+	KubeClusterIPsCheckChain = "cluster-ips-check"
 
 	// LoadBalancerSourceRanges handling
 	kubeFirewallIPsMap     = "firewall-ips"
@@ -179,6 +197,10 @@ type Proxier struct {
 
 	// staleChains contains information about chains to be deleted later
 	staleChains map[string]time.Time
+
+	// serviceCIDRs is a comma separated list of ServiceCIDRs belonging to the IPFamily
+	// which proxier is operating on, can be directly consumed by knftables.
+	serviceCIDRs string
 }
 
 // Proxier implements proxy.Provider
@@ -297,8 +319,6 @@ func NewDualStackProxier(
 //
 // These are set up from setupNFTables() and then not directly referenced by
 // syncProxyRules().
-//
-// All of our base chains have names that are just "${type}-${hook}". e.g., "nat-prerouting".
 type nftablesBaseChain struct {
 	name      string
 	chainType knftables.BaseChainType
@@ -309,13 +329,14 @@ type nftablesBaseChain struct {
 var nftablesBaseChains = []nftablesBaseChain{
 	// We want our filtering rules to operate on pre-DNAT dest IPs, so our filter
 	// chains have to run before DNAT.
-	{"filter-prerouting", knftables.FilterType, knftables.PreroutingHook, knftables.DNATPriority + "-10"},
-	{"filter-input", knftables.FilterType, knftables.InputHook, knftables.DNATPriority + "-10"},
-	{"filter-forward", knftables.FilterType, knftables.ForwardHook, knftables.DNATPriority + "-10"},
-	{"filter-output", knftables.FilterType, knftables.OutputHook, knftables.DNATPriority + "-10"},
-	{"nat-prerouting", knftables.NATType, knftables.PreroutingHook, knftables.DNATPriority},
-	{"nat-output", knftables.NATType, knftables.OutputHook, knftables.DNATPriority},
-	{"nat-postrouting", knftables.NATType, knftables.PostroutingHook, knftables.SNATPriority},
+	{kubeFilterPreRouting, knftables.FilterType, knftables.PreroutingHook, knftables.DNATPriority + "-10"},
+	{kubeFilterInput, knftables.FilterType, knftables.InputHook, knftables.DNATPriority + "-10"},
+	{kubeFilterForward, knftables.FilterType, knftables.ForwardHook, knftables.DNATPriority + "-10"},
+	{kubeFilterOutput, knftables.FilterType, knftables.OutputHook, knftables.DNATPriority + "-10"},
+	{KubeFilterOutputPostDNAT, knftables.FilterType, knftables.OutputHook, knftables.DNATPriority + "+10"},
+	{kubeNATPreRouting, knftables.NATType, knftables.PreroutingHook, knftables.DNATPriority},
+	{kubeNATOutput, knftables.NATType, knftables.OutputHook, knftables.DNATPriority},
+	{kubeNATPostRouting, knftables.NATType, knftables.PostroutingHook, knftables.SNATPriority},
 }
 
 // nftablesJumpChains lists our top-level "regular chains" that are jumped to directly
@@ -331,16 +352,19 @@ var nftablesJumpChains = []nftablesJumpChain{
 	// We can't jump to kubeEndpointsCheckChain from filter-prerouting like
 	// kubeFirewallCheckChain because reject action is only valid in chains using the
 	// input, forward or output hooks.
-	{kubeEndpointsCheckChain, "filter-input", "ct state new"},
-	{kubeEndpointsCheckChain, "filter-forward", "ct state new"},
-	{kubeEndpointsCheckChain, "filter-output", "ct state new"},
+	{kubeEndpointsCheckChain, kubeFilterInput, "ct state new"},
+	{kubeEndpointsCheckChain, kubeFilterForward, "ct state new"},
+	{kubeEndpointsCheckChain, kubeFilterOutput, "ct state new"},
 
-	{kubeFirewallCheckChain, "filter-prerouting", "ct state new"},
-	{kubeFirewallCheckChain, "filter-output", "ct state new"},
+	{kubeFirewallCheckChain, kubeFilterPreRouting, "ct state new"},
+	{kubeFirewallCheckChain, kubeFilterOutput, "ct state new"},
 
-	{kubeServicesChain, "nat-output", ""},
-	{kubeServicesChain, "nat-prerouting", ""},
-	{kubeMasqueradingChain, "nat-postrouting", ""},
+	{kubeServicesChain, kubeNATOutput, ""},
+	{kubeServicesChain, kubeNATPreRouting, ""},
+	{kubeMasqueradingChain, kubeNATPostRouting, ""},
+
+	{KubeClusterIPsCheckChain, kubeFilterForward, "ct state new"},
+	{KubeClusterIPsCheckChain, KubeFilterOutputPostDNAT, "ct state new"},
 }
 
 // ensureChain adds commands to tx to ensure that chain exists and doesn't contain
@@ -399,7 +423,7 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 	}
 
 	// Ensure all of our other "top-level" chains exist
-	for _, chain := range []string{kubeServicesChain, kubeMasqueradingChain, kubeMarkMasqChain} {
+	for _, chain := range []string{kubeServicesChain, KubeClusterIPsCheckChain, kubeMasqueradingChain, kubeMarkMasqChain} {
 		ensureChain(chain, tx, createdChains)
 	}
 
@@ -428,6 +452,34 @@ func (proxier *Proxier) setupNFTables(tx *knftables.Transaction) {
 		Chain: kubeMasqueradingChain,
 		Rule:  "masquerade fully-random",
 	})
+
+	// Add cluster-ips set.
+	tx.Add(&knftables.Set{
+		Name:    kubeClusterIPsSet,
+		Type:    ipvX_addr,
+		Comment: ptr.To("Active ClusterIPs"),
+	})
+
+	// Reject traffic to invalid ports of ClusterIPs.
+	tx.Add(&knftables.Rule{
+		Chain: KubeClusterIPsCheckChain,
+		Rule: knftables.Concat(
+			ipX, "daddr", "@", kubeClusterIPsSet, "reject",
+		),
+		Comment: ptr.To("Reject traffic to invalid ports of ClusterIPs"),
+	})
+
+	// Drop traffic to unused ClusterIPs.
+	if len(proxier.serviceCIDRs) > 0 {
+		tx.Add(&knftables.Rule{
+			Chain: KubeClusterIPsCheckChain,
+			Rule: knftables.Concat(
+				ipX, "daddr", "{", proxier.serviceCIDRs, "}",
+				"drop",
+			),
+			Comment: ptr.To("Drop traffic to unused ClusterIPs"),
+		})
+	}
 
 	// Fill in nodeport-ips set if needed (or delete it if not). (We do "add+delete"
 	// rather than just "delete" when we want to ensure the set doesn't exist, because
@@ -764,6 +816,26 @@ func (proxier *Proxier) OnNodeDelete(node *v1.Node) {
 func (proxier *Proxier) OnNodeSynced() {
 }
 
+// OnServiceCIDRsChanged is called whenever a change is observed
+// in any of the ServiceCIDRs, and provides complete list of service cidrs.
+func (proxier *Proxier) OnServiceCIDRsChanged(cidrs []string) {
+	proxier.mu.Lock()
+	defer proxier.mu.Unlock()
+
+	cidrsForProxier := make([]string, 0)
+	for _, cidr := range cidrs {
+		isIPv4CIDR := netutils.IsIPv4CIDRString(cidr)
+		if proxier.ipFamily == v1.IPv4Protocol && isIPv4CIDR {
+			cidrsForProxier = append(cidrsForProxier, cidr)
+		}
+
+		if proxier.ipFamily == v1.IPv6Protocol && !isIPv4CIDR {
+			cidrsForProxier = append(cidrsForProxier, cidr)
+		}
+	}
+	proxier.serviceCIDRs = strings.Join(cidrsForProxier, ",")
+}
+
 const (
 	// Maximum length for one of our chain name prefixes, including the trailing
 	// hyphen.
@@ -955,6 +1027,9 @@ func (proxier *Proxier) syncProxyRules() {
 	}
 
 	// We currently fully-rebuild our sets and maps on each resync
+	tx.Flush(&knftables.Set{
+		Name: kubeClusterIPsSet,
+	})
 	tx.Flush(&knftables.Map{
 		Name: kubeFirewallIPsMap,
 	})
@@ -1095,6 +1170,10 @@ func (proxier *Proxier) syncProxyRules() {
 		}
 
 		// Capture the clusterIP.
+		tx.Add(&knftables.Element{
+			Set: kubeClusterIPsSet,
+			Key: []string{svcInfo.ClusterIP().String()},
+		})
 		if hasInternalEndpoints {
 			tx.Add(&knftables.Element{
 				Map: kubeServiceIPsMap,

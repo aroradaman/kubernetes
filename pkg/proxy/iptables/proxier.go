@@ -51,6 +51,7 @@ import (
 	"k8s.io/kubernetes/pkg/proxy/metrics"
 	proxyutil "k8s.io/kubernetes/pkg/proxy/util"
 	proxyutiliptables "k8s.io/kubernetes/pkg/proxy/util/iptables"
+	"k8s.io/kubernetes/pkg/proxy/util/nfacct"
 	"k8s.io/kubernetes/pkg/util/async"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utilexec "k8s.io/utils/exec"
@@ -133,6 +134,18 @@ func NewDualStackProxier(
 	return metaproxier.NewMetaProxier(ipv4Proxier, ipv6Proxier), nil
 }
 
+// nfAcctTracker can be used to update metrics tracked by nfacct objects.
+type nfAcctTracker struct {
+	// name of the counter registered with nfacct. It is a base 32 encoded SHA256 hash
+	// of metric name and IP family, truncated to nfacct.MaxLength characters.
+	name string
+	// ensured is set to true if the counter exists in the nfacct subsystem.
+	ensured bool
+	// updateMetric can modify a metric with the counts of packets and bytes tracked by the
+	// underlying nfacct object.
+	updateMetric func(packets, bytes uint64)
+}
+
 // Proxier is an iptables based proxy for connections between a localhost:lport
 // and services that provide the actual backends.
 type Proxier struct {
@@ -166,6 +179,7 @@ type Proxier struct {
 	masqueradeAll  bool
 	masqueradeMark string
 	conntrack      conntrack.Interface
+	nfacct         nfacct.Interface
 	localDetector  proxyutiliptables.LocalTrafficDetector
 	hostname       string
 	nodeIP         net.IP
@@ -205,6 +219,9 @@ type Proxier struct {
 	// networkInterfacer defines an interface for several net library functions.
 	// Inject for test purpose.
 	networkInterfacer proxyutil.NetworkInterfacer
+
+	// nfAcctTrackers maps a metric by its name to nfAcctTracker.
+	nfAcctTrackers map[string]*nfAcctTracker
 }
 
 // Proxier implements proxy.Provider
@@ -266,6 +283,10 @@ func NewProxier(ipFamily v1.IPFamily,
 	klog.V(2).InfoS("Using iptables mark for masquerade", "ipFamily", ipt.Protocol(), "mark", masqueradeMark)
 
 	serviceHealthServer := healthcheck.NewServiceHealthServer(hostname, recorder, nodePortAddresses, healthzServer)
+	nfacctRunner, err := nfacct.New()
+	if err != nil {
+		klog.ErrorS(err, "Failed to create nfacct runner")
+	}
 
 	proxier := &Proxier{
 		ipFamily:                 ipFamily,
@@ -279,6 +300,7 @@ func NewProxier(ipFamily v1.IPFamily,
 		masqueradeAll:            masqueradeAll,
 		masqueradeMark:           masqueradeMark,
 		conntrack:                conntrack.NewExec(exec),
+		nfacct:                   nfacctRunner,
 		localDetector:            localDetector,
 		hostname:                 hostname,
 		nodeIP:                   nodeIP,
@@ -296,6 +318,15 @@ func NewProxier(ipFamily v1.IPFamily,
 		nodePortAddresses:        nodePortAddresses,
 		networkInterfacer:        proxyutil.RealNetwork{},
 		conntrackTCPLiberal:      conntrackTCPLiberal,
+		nfAcctTrackers: map[string]*nfAcctTracker{
+			metrics.IptablesCTStateInvalidDroppedPackets.Name: {
+				name:    base32SHA256Sum(metrics.IptablesCTStateInvalidDroppedPackets.Name, string(ipFamily))[:nfacct.MaxLength],
+				ensured: false,
+				updateMetric: func(packets, _ uint64) {
+					metrics.IptablesCTStateInvalidDroppedPackets.WithLabelValues(string(ipFamily)).Set(float64(packets))
+				},
+			},
+		},
 	}
 
 	burstSyncs := 2
@@ -682,9 +713,14 @@ func (proxier *Proxier) OnServiceCIDRsChanged(_ []string) {}
 // then encoding to base32 and truncating to 16 chars. We do this because IPTables
 // Chain Names must be <= 28 chars long, and the longer they are the harder they are to read.
 func portProtoHash(servicePortName string, protocol string) string {
-	hash := sha256.Sum256([]byte(servicePortName + protocol))
-	encoded := base32.StdEncoding.EncodeToString(hash[:])
+	encoded := base32SHA256Sum(servicePortName, protocol)
 	return encoded[:16]
+}
+
+// sha256Sum returns base32 encoded sha256 hash for the give string objects.
+func base32SHA256Sum(objects ...string) string {
+	hash := sha256.Sum256([]byte(strings.Join(objects, "")))
+	return base32.StdEncoding.EncodeToString(hash[:])
 }
 
 const (
@@ -844,6 +880,18 @@ func (proxier *Proxier) syncProxyRules() {
 			if _, err := proxier.iptables.EnsureRule(utiliptables.Prepend, jump.table, jump.srcChain, args...); err != nil {
 				klog.ErrorS(err, "Failed to ensure chain jumps", "table", jump.table, "srcChain", jump.srcChain, "dstChain", jump.dstChain)
 				return
+			}
+		}
+
+		// ensure the nfacct counters.
+		if proxier.nfacct != nil {
+			for metricName, tracker := range proxier.nfAcctTrackers {
+				if err := proxier.nfacct.Ensure(tracker.name); err != nil {
+					tracker.ensured = false
+					klog.ErrorS(err, "Failed to create nfacct counter; the corresponding metric will not be updated", "metric", metricName)
+				} else {
+					tracker.ensured = true
+				}
 			}
 		}
 	}
@@ -1398,6 +1446,17 @@ func (proxier *Proxier) syncProxyRules() {
 		} else {
 			klog.ErrorS(err, "Failed to execute iptables-save: stale chains will not be deleted")
 		}
+
+		if proxier.nfacct != nil {
+			for metricName, tracker := range proxier.nfAcctTrackers {
+				counter, err := proxier.nfacct.Get(tracker.name)
+				if err != nil {
+					klog.ErrorS(err, "Failed to get nfacct counter", "metricName", metricName)
+				} else {
+					tracker.updateMetric(counter.Packets, counter.Bytes)
+				}
+			}
+		}
 	}
 
 	// Finally, tail-call to the nodePorts chain.  This needs to be after all
@@ -1447,12 +1506,20 @@ func (proxier *Proxier) syncProxyRules() {
 	// Ref: https://github.com/kubernetes/kubernetes/issues/74839
 	// Ref: https://github.com/kubernetes/kubernetes/issues/117924
 	if !proxier.conntrackTCPLiberal {
-		proxier.filterRules.Write(
+		rule := []string{
 			"-A", string(kubeForwardChain),
 			"-m", "conntrack",
 			"--ctstate", "INVALID",
+		}
+		if counter, ok := proxier.nfAcctTrackers[metrics.IptablesCTStateInvalidDroppedPackets.Name]; ok && counter.ensured {
+			rule = append(rule,
+				"-m", "nfacct", "--nfacct-name", counter.name,
+			)
+		}
+		rule = append(rule,
 			"-j", "DROP",
 		)
+		proxier.filterRules.Write(rule)
 	}
 
 	// If the masqueradeMark has been added then we want to forward that same

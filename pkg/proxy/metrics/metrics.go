@@ -138,6 +138,18 @@ var (
 		},
 	)
 
+	// IptablesCTStateInvalidDroppedPackets is the number of packets dropped
+	// by iptables which were marked INVALID by conntrack.
+	IptablesCTStateInvalidDroppedPackets = metrics.NewGaugeVec(
+		&metrics.GaugeOpts{
+			Subsystem:      kubeProxySubsystem,
+			Name:           "iptables_ct_state_invalid_dropped_packets",
+			Help:           "packets dropped by iptables to work around conntrack problems",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"ip_family"},
+	)
+
 	// IptablesRestoreFailuresTotal is the number of iptables restore failures that the proxy has
 	// seen.
 	IptablesRestoreFailuresTotal = metrics.NewCounter(
@@ -248,6 +260,7 @@ func RegisterMetrics() {
 		legacyregistry.MustRegister(EndpointChangesTotal)
 		legacyregistry.MustRegister(ServiceChangesPending)
 		legacyregistry.MustRegister(ServiceChangesTotal)
+		legacyregistry.MustRegister(IptablesCTStateInvalidDroppedPackets)
 		legacyregistry.MustRegister(IptablesRulesTotal)
 		legacyregistry.MustRegister(IptablesRulesLastSync)
 		legacyregistry.MustRegister(IptablesRestoreFailuresTotal)

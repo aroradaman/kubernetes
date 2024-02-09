@@ -25,22 +25,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-
+	"k8s.io/kubernetes/pkg/cluster/ports"
+	"k8s.io/kubernetes/pkg/proxy/apis/config"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2emetrics "k8s.io/kubernetes/test/e2e/framework/metrics"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/network/common"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	admissionapi "k8s.io/pod-security-admission/api"
 	netutils "k8s.io/utils/net"
-
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 )
 
 var kubeProxyE2eImage = imageutils.GetE2EImage(imageutils.Agnhost)
@@ -251,4 +254,178 @@ var _ = common.SIGDescribe("KubeProxy", func() {
 		}
 	})
 
+	ginkgo.It("should update metric for tracking dropped packets for iptables mode if tcp_be_liberal not set [Privileged]", func(ctx context.Context) {
+		cs := fr.ClientSet
+		ns := fr.Namespace.Name
+
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+		framework.ExpectNoError(err)
+		if len(nodes.Items) < 2 {
+			e2eskipper.Skipf(
+				"Test requires >= 2 Ready nodes, but there are only %v nodes",
+				len(nodes.Items))
+		}
+
+		clientNodeName := nodes.Items[0].Name
+		serverNodeName := nodes.Items[1].Name
+
+		metricName := "kubeproxy_iptables_ct_state_invalid_dropped_packets"
+		metricsGrabber, err := e2emetrics.NewMetricsGrabber(ctx, fr.ClientSet, nil, fr.ClientConfig(), false, false, false, false, false, false)
+		framework.ExpectNoError(err)
+
+		// create a pod with host-network for execing
+		hostExecPodName := "host-exec-pod"
+		hostExecPod := e2epod.NewExecPodSpec(fr.Namespace.Name, hostExecPodName, true)
+		nodeSelection := e2epod.NodeSelection{Name: serverNodeName}
+		e2epod.SetNodeSelection(&hostExecPod.Spec, nodeSelection)
+		e2epod.NewPodClient(fr).CreateSync(ctx, hostExecPod)
+
+		// get proxyMode
+		stdout, err := e2epodoutput.RunHostCmd(fr.Namespace.Name, hostExecPodName, fmt.Sprintf("curl --silent 127.0.0.1:%d/proxyMode", ports.ProxyStatusPort))
+		framework.ExpectNoError(err)
+		proxyMode := strings.TrimSpace(stdout)
+
+		// get value of nf_conntrack_tcp_be_liberal
+		stdout, err = e2epodoutput.RunHostCmd(fr.Namespace.Name, hostExecPodName, "cat /proc/sys/net/netfilter/nf_conntrack_tcp_be_liberal")
+		framework.ExpectNoError(err)
+		tcpBeLiberal := strings.TrimSpace(stdout)
+
+		family := v1.IPv4Protocol
+		if framework.TestContext.ClusterIsIPv6() {
+			family = v1.IPv6Protocol
+		}
+
+		if !(proxyMode == string(config.ProxyModeIPTables) && tcpBeLiberal == "0" && family == v1.IPv4Protocol) {
+			e2eskipper.Skipf("test requires iptables proxy mode running in IPv4 without nf_conntrack_tcp_be_liberal set")
+		}
+
+		// get value of target metric before generating out-of-window packets
+		metrics, err := metricsGrabber.GrabFromKubeProxy(ctx, serverNodeName)
+		framework.ExpectNoError(err)
+		targetMetricBefore := metrics.GetMetricValuesForLabel(metricName, "ip_family")["IPv4"]
+
+		// create server pod and service
+		serverLabel := map[string]string{
+			"app": "boom-server",
+		}
+		serverPod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "boom-server",
+				Labels: serverLabel,
+			},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "boom-server",
+						Image: imageutils.GetE2EImage(imageutils.RegressionIssue74839),
+						Ports: []v1.ContainerPort{
+							{
+								ContainerPort: 9000, // Default port exposed by boom-server
+							},
+						},
+						Env: []v1.EnvVar{
+							{
+								Name: "POD_IP",
+								ValueFrom: &v1.EnvVarSource{
+									FieldRef: &v1.ObjectFieldSelector{
+										APIVersion: "v1",
+										FieldPath:  "status.podIP",
+									},
+								},
+							},
+							{
+								Name: "POD_IPS",
+								ValueFrom: &v1.EnvVarSource{
+									FieldRef: &v1.ObjectFieldSelector{
+										APIVersion: "v1",
+										FieldPath:  "status.podIPs",
+									},
+								},
+							},
+						},
+						SecurityContext: &v1.SecurityContext{
+							Capabilities: &v1.Capabilities{
+								Add: []v1.Capability{"NET_RAW"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		nodeSelection = e2epod.NodeSelection{Name: serverNodeName}
+		e2epod.SetNodeSelection(&serverPod.Spec, nodeSelection)
+		e2epod.NewPodClient(fr).CreateSync(ctx, serverPod)
+		ginkgo.By("Server pod created on node " + serverNodeName)
+
+		svc := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "boom-server",
+			},
+			Spec: v1.ServiceSpec{
+				Selector: serverLabel,
+				Ports: []v1.ServicePort{
+					{
+						Protocol: v1.ProtocolTCP,
+						Port:     9000,
+					},
+				},
+			},
+		}
+		_, err = fr.ClientSet.CoreV1().Services(fr.Namespace.Name).Create(ctx, svc, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		// create client pod
+		pod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "startup-script",
+			},
+			Spec: v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "startup-script",
+						Image: imageutils.GetE2EImage(imageutils.BusyBox),
+						Command: []string{
+							"sh", "-c", "while true; do sleep 2; nc boom-server 9000& done",
+						},
+					},
+				},
+				RestartPolicy: v1.RestartPolicyNever,
+			},
+		}
+		nodeSelection = e2epod.NodeSelection{Name: clientNodeName}
+		e2epod.SetNodeSelection(&pod.Spec, nodeSelection)
+		e2epod.NewPodClient(fr).CreateSync(ctx, pod)
+
+		ginkgo.By("checking if server has transmitted some out-of-window packets")
+		if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, time.Minute, true, func(ctx context.Context) (done bool, err error) {
+			logs, err := e2epod.GetPodLogs(ctx, cs, ns, "boom-server", "boom-server")
+			if err != nil {
+				// Retry the error next time.
+				return false, nil
+			}
+
+			// wait for at server to generate some out-of-window packets before checking the metric.
+			if strings.Count(logs, "boom packet injected") < 10 {
+				return false, nil
+			}
+			return true, nil
+		}); err != nil {
+			framework.Failf("boom-server pod did not send any bad packet to the client")
+		}
+
+		// delete the server pod to trigger proxy sync
+		e2epod.DeletePodOrFail(ctx, fr.ClientSet, fr.Namespace.Name, serverPod.Name)
+
+		// if nf_conntrack_tcp_be_liberal is not set, then our target metric should be updated
+		// after generating out-of-window packets.
+		if err := wait.PollUntilContextTimeout(ctx, 10*time.Second, 2*time.Minute, true, func(_ context.Context) (bool, error) {
+			metrics, err := metricsGrabber.GrabFromKubeProxy(ctx, serverNodeName)
+			framework.ExpectNoError(err)
+			targetMetricAfter := metrics.GetMetricValuesForLabel(metricName, "ip_family")["IPv4"]
+			return targetMetricAfter > targetMetricBefore, nil
+		}); err != nil {
+			framework.Failf("expected %s metric to be updated after generating out-of-window packets", metricName)
+		}
+	})
 })

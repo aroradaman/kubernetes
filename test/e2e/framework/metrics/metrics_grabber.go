@@ -32,8 +32,9 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 )
 
 const (
@@ -43,6 +44,8 @@ const (
 	kubeControllerManagerPort = 10257
 	// snapshotControllerPort is the port for the snapshot controller
 	snapshotControllerPort = 9102
+	// kubeProxyPort is the default port for the kube-proxy status server.
+	kubeProxyPort = 10249
 )
 
 // MetricsGrabbingDisabledError is an error that is wrapped by the
@@ -231,6 +234,38 @@ func (g *Grabber) getMetricsFromNode(ctx context.Context, nodeName string, kubel
 		}
 		return string(rawOutput), nil
 	}
+}
+
+// GrabFromKubeProxy returns metrics from kube-proxy
+func (g *Grabber) GrabFromKubeProxy(ctx context.Context, nodeName string) (KubeProxyMetrics, error) {
+	nodes, err := g.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{FieldSelector: fields.Set{"metadata.name": nodeName}.AsSelector().String()})
+	if err != nil {
+		return KubeProxyMetrics{}, err
+	}
+
+	if len(nodes.Items) != 1 {
+		return KubeProxyMetrics{}, fmt.Errorf("error listing nodes with name %v, got %v", nodeName, nodes.Items)
+	}
+	output, err := g.grabFromKubeProxy(ctx, nodeName)
+	if err != nil {
+		return KubeProxyMetrics{}, err
+	}
+	return parseKubeProxyMetrics(output)
+}
+
+func (g *Grabber) grabFromKubeProxy(ctx context.Context, nodeName string) (string, error) {
+	hostCmdPodName := fmt.Sprintf("grab-kube-proxy-metrics-%s", framework.RandomSuffix())
+	hostCmdPod := e2epod.NewExecPodSpec(metav1.NamespaceSystem, hostCmdPodName, true)
+	nodeSelection := e2epod.NodeSelection{Name: nodeName}
+	e2epod.SetNodeSelection(&hostCmdPod.Spec, nodeSelection)
+	hostCmdPod, err := g.client.CoreV1().Pods(metav1.NamespaceSystem).Create(ctx, hostCmdPod, metav1.CreateOptions{})
+	if err = e2epod.WaitTimeoutForPodReadyInNamespace(ctx, g.client, hostCmdPodName, metav1.NamespaceSystem, 5*time.Minute); err != nil {
+		return "", fmt.Errorf("error waiting for pod to be up: %w", err)
+	}
+
+	stdout, err := e2epodoutput.RunHostCmd(metav1.NamespaceSystem, hostCmdPodName, fmt.Sprintf("curl --silent 127.0.0.1:%d/metrics", kubeProxyPort))
+	_ = g.client.CoreV1().Pods(metav1.NamespaceSystem).Delete(ctx, hostCmdPod.Name, metav1.DeleteOptions{})
+	return stdout, err
 }
 
 // GrabFromScheduler returns metrics from scheduler

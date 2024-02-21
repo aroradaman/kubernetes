@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"net"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,94 +96,146 @@ nodePortAddresses:
 `
 
 	testCases := []struct {
-		name               string
-		mode               string
-		bindAddress        string
-		clusterCIDR        string
-		healthzBindAddress string
-		metricsBindAddress string
-		extraConfig        string
+		name                         string
+		mode                         string
+		bindAddress                  string
+		clusterCIDR                  string
+		healthzBindAddress           string
+		metricsBindAddress           string
+		extraConfig                  string
+		expectedHealthzBindAddresses []string
+		expectedHealthzPort          int32
+		expectedMetricsBindAddresses []string
+		expectedMetricsPort          int32
 	}{
 		{
-			name:               "iptables mode, IPv4 all-zeros bind address",
-			mode:               "iptables",
-			bindAddress:        "0.0.0.0",
-			clusterCIDR:        "1.2.3.0/24",
-			healthzBindAddress: "1.2.3.4:12345",
-			metricsBindAddress: "2.3.4.5:23456",
+			name:                         "iptables mode, IPv4 all-zeros bind address",
+			mode:                         "iptables",
+			bindAddress:                  "0.0.0.0",
+			clusterCIDR:                  "1.2.3.0/24",
+			healthzBindAddress:           "1.2.3.4:12345",
+			metricsBindAddress:           "2.3.4.5:23456",
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
-			name:               "iptables mode, non-zeros IPv4 config",
-			mode:               "iptables",
-			bindAddress:        "9.8.7.6",
-			clusterCIDR:        "1.2.3.0/24",
-			healthzBindAddress: "1.2.3.4:12345",
-			metricsBindAddress: "2.3.4.5:23456",
+			name:                         "iptables mode, non-zeros IPv4 config",
+			mode:                         "iptables",
+			bindAddress:                  "9.8.7.6",
+			clusterCIDR:                  "1.2.3.0/24",
+			healthzBindAddress:           "1.2.3.4:12345",
+			metricsBindAddress:           "2.3.4.5:23456",
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: "::"' (IPv6 all-zeros) in kube-proxy
 			// config file. The user will need to put quotes around '::' since
 			// 'bindAddress: ::' is invalid yaml syntax.
-			name:               "iptables mode, IPv6 \"::\" bind address",
-			mode:               "iptables",
-			bindAddress:        "\"::\"",
-			clusterCIDR:        "fd00:1::0/64",
-			healthzBindAddress: "[fd00:1::5]:12345",
-			metricsBindAddress: "[fd00:2::5]:23456",
+			name:                         "iptables mode, IPv6 \"::\" bind address",
+			mode:                         "iptables",
+			bindAddress:                  "\"::\"",
+			clusterCIDR:                  "fd00:1::0/64",
+			healthzBindAddress:           "[fd00:1::5]:12345",
+			metricsBindAddress:           "[fd00:2::5]:23456",
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: "[::]"' (IPv6 all-zeros in brackets)
 			// in kube-proxy config file. The user will need to use
 			// surrounding quotes here since 'bindAddress: [::]' is invalid
 			// yaml syntax.
-			name:               "iptables mode, IPv6 \"[::]\" bind address",
-			mode:               "iptables",
-			bindAddress:        "\"[::]\"",
-			clusterCIDR:        "fd00:1::0/64",
-			healthzBindAddress: "[fd00:1::5]:12345",
-			metricsBindAddress: "[fd00:2::5]:23456",
+			name:                         "iptables mode, IPv6 \"[::]\" bind address",
+			mode:                         "iptables",
+			bindAddress:                  "\"[::]\"",
+			clusterCIDR:                  "fd00:1::0/64",
+			healthzBindAddress:           "[fd00:1::5]:12345",
+			metricsBindAddress:           "[fd00:2::5]:23456",
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: ::0' (another form of IPv6 all-zeros).
 			// No surrounding quotes are required around '::0'.
-			name:               "iptables mode, IPv6 ::0 bind address",
-			mode:               "iptables",
-			bindAddress:        "::0",
-			clusterCIDR:        "fd00:1::0/64",
-			healthzBindAddress: "[fd00:1::5]:12345",
-			metricsBindAddress: "[fd00:2::5]:23456",
+			name:                         "iptables mode, IPv6 ::0 bind address",
+			mode:                         "iptables",
+			bindAddress:                  "::0",
+			clusterCIDR:                  "fd00:1::0/64",
+			healthzBindAddress:           "[fd00:1::5]:12345",
+			metricsBindAddress:           "[fd00:2::5]:23456",
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
-			name:               "ipvs mode, IPv6 config",
-			mode:               "ipvs",
-			bindAddress:        "2001:db8::1",
-			clusterCIDR:        "fd00:1::0/64",
-			healthzBindAddress: "[fd00:1::5]:12345",
-			metricsBindAddress: "[fd00:2::5]:23456",
+			name:                         "ipvs mode, IPv6 config",
+			mode:                         "ipvs",
+			bindAddress:                  "2001:db8::1",
+			clusterCIDR:                  "fd00:1::0/64",
+			healthzBindAddress:           "[fd00:1::5]:12345",
+			metricsBindAddress:           "[fd00:2::5]:23456",
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for unknown field within config.
 			// For v1alpha1 a lenient path is implemented and will throw a
 			// strict decoding warning instead of failing to load
-			name:               "unknown field",
-			mode:               "iptables",
-			bindAddress:        "9.8.7.6",
-			clusterCIDR:        "1.2.3.0/24",
-			healthzBindAddress: "1.2.3.4:12345",
-			metricsBindAddress: "2.3.4.5:23456",
-			extraConfig:        "foo: bar",
+			name:                         "unknown field",
+			mode:                         "iptables",
+			bindAddress:                  "9.8.7.6",
+			clusterCIDR:                  "1.2.3.0/24",
+			healthzBindAddress:           "4.3.2.1:54321",
+			metricsBindAddress:           "21.31.41.51:3306",
+			extraConfig:                  "foo: bar",
+			expectedHealthzBindAddresses: []string{"4.3.2.1/32"},
+			expectedHealthzPort:          int32(54321),
+			expectedMetricsBindAddresses: []string{"21.31.41.51/32"},
+			expectedMetricsPort:          int32(3306),
 		},
 		{
 			// Test for duplicate field within config.
 			// For v1alpha1 a lenient path is implemented and will throw a
 			// strict decoding warning instead of failing to load
-			name:               "duplicate field",
-			mode:               "iptables",
-			bindAddress:        "9.8.7.6",
-			clusterCIDR:        "1.2.3.0/24",
-			healthzBindAddress: "1.2.3.4:12345",
-			metricsBindAddress: "2.3.4.5:23456",
-			extraConfig:        "bindAddress: 9.8.7.6",
+			name:                         "duplicate field",
+			mode:                         "iptables",
+			bindAddress:                  "9.8.7.6",
+			clusterCIDR:                  "1.2.3.0/24",
+			healthzBindAddress:           "12.23.34.45:8080",
+			metricsBindAddress:           "35.45.55.65:9090",
+			extraConfig:                  "bindAddress: 9.8.7.6",
+			expectedHealthzBindAddresses: []string{"12.23.34.45/32"},
+			expectedHealthzPort:          int32(8080),
+			expectedMetricsBindAddresses: []string{"35.45.55.65/32"},
+			expectedMetricsPort:          int32(9090),
+		},
+		{
+			// Test for unspecified healthz and metrics address.
+			// conversion from v1alpha1 to internal should add /0 prefix for
+			// unspecified address
+			name:                         "unspecified healthz and metrics address",
+			mode:                         "iptables",
+			bindAddress:                  "9.8.7.6",
+			clusterCIDR:                  "1.2.3.0/24",
+			healthzBindAddress:           "0.0.0.0:45678",
+			metricsBindAddress:           "[::]:56789",
+			extraConfig:                  "bindAddress: 9.8.7.6",
+			expectedHealthzBindAddresses: []string{"0.0.0.0/0"},
+			expectedHealthzPort:          int32(45678),
+			expectedMetricsBindAddresses: []string{"::/0"},
+			expectedMetricsPort:          int32(56789),
 		},
 	}
 
@@ -193,7 +246,7 @@ nodePortAddresses:
 			expBindAddr = expBindAddr[1 : len(tc.bindAddress)-1]
 		}
 		expected := &kubeproxyconfig.KubeProxyConfiguration{
-			BindAddress: expBindAddr,
+			NodeIPOverride: []string{expBindAddr},
 			ClientConnection: componentbaseconfig.ClientConnectionConfiguration{
 				AcceptContentTypes: "abc",
 				Burst:              100,
@@ -201,44 +254,46 @@ nodePortAddresses:
 				Kubeconfig:         "/path/to/kubeconfig",
 				QPS:                7,
 			},
-			ClusterCIDR:      tc.clusterCIDR,
+
+			MinSyncPeriod:    metav1.Duration{Duration: 10 * time.Second},
+			SyncPeriod:       metav1.Duration{Duration: 60 * time.Second},
 			ConfigSyncPeriod: metav1.Duration{Duration: 15 * time.Second},
-			Conntrack: kubeproxyconfig.KubeProxyConntrackConfiguration{
-				MaxPerCore:            ptr.To[int32](2),
-				Min:                   ptr.To[int32](1),
-				TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
-				TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
+			Linux: kubeproxyconfig.KubeProxyLinuxConfiguration{
+				Conntrack: kubeproxyconfig.KubeProxyConntrackConfiguration{
+					MaxPerCore:            ptr.To[int32](2),
+					Min:                   ptr.To[int32](1),
+					TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
+					TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
+				},
+				MasqueradeAll: true,
+				OOMScoreAdj:   ptr.To[int32](17),
 			},
-			FeatureGates:       map[string]bool{},
-			HealthzBindAddress: tc.healthzBindAddress,
-			HostnameOverride:   "foo",
+			FeatureGates:         map[string]bool{},
+			HealthzBindAddresses: tc.expectedHealthzBindAddresses,
+			HealthzBindPort:      tc.expectedHealthzPort,
+			HostnameOverride:     "foo",
 			IPTables: kubeproxyconfig.KubeProxyIPTablesConfiguration{
-				MasqueradeAll:      true,
+
 				MasqueradeBit:      ptr.To[int32](17),
 				LocalhostNodePorts: ptr.To(true),
-				MinSyncPeriod:      metav1.Duration{Duration: 10 * time.Second},
-				SyncPeriod:         metav1.Duration{Duration: 60 * time.Second},
 			},
 			IPVS: kubeproxyconfig.KubeProxyIPVSConfiguration{
-				MinSyncPeriod: metav1.Duration{Duration: 10 * time.Second},
-				SyncPeriod:    metav1.Duration{Duration: 60 * time.Second},
+				MasqueradeBit: ptr.To[int32](17),
 				ExcludeCIDRs:  []string{"10.20.30.40/16", "fd00:1::0/64"},
 			},
 			NFTables: kubeproxyconfig.KubeProxyNFTablesConfiguration{
-				MasqueradeAll: true,
 				MasqueradeBit: ptr.To[int32](18),
-				MinSyncPeriod: metav1.Duration{Duration: 10 * time.Second},
-				SyncPeriod:    metav1.Duration{Duration: 60 * time.Second},
 			},
-			MetricsBindAddress: tc.metricsBindAddress,
-			Mode:               kubeproxyconfig.ProxyMode(tc.mode),
-			OOMScoreAdj:        ptr.To[int32](17),
-			PortRange:          "2-7",
-			NodePortAddresses:  []string{"10.20.30.40/16", "fd00:1::0/64"},
-			DetectLocalMode:    kubeproxyconfig.LocalModeClusterCIDR,
+			MetricsBindAddresses: tc.expectedMetricsBindAddresses,
+			MetricsBindPort:      tc.expectedMetricsPort,
+			Mode:                 kubeproxyconfig.ProxyMode(tc.mode),
+
+			NodePortAddresses: []string{"10.20.30.40/16", "fd00:1::0/64"},
+			DetectLocalMode:   kubeproxyconfig.LocalModeClusterCIDR,
 			DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
-				BridgeInterface:     string("cbr0"),
-				InterfaceNamePrefix: string("veth"),
+				BridgeInterface:     "cbr0",
+				ClusterCIDRs:        strings.Split(tc.clusterCIDR, ","),
+				InterfaceNamePrefix: "veth",
 			},
 			Logging: logsapi.LoggingConfiguration{
 				Format:         "text",
@@ -689,7 +744,7 @@ func Test_detectNodeIPs(t *testing.T) {
 	cases := []struct {
 		name           string
 		rawNodeIPs     []net.IP
-		bindAddress    string
+		nodeIPOverride []string
 		expectedFamily v1.IPFamily
 		expectedIPv4   string
 		expectedIPv6   string
@@ -697,7 +752,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address IPv4 unicast address and no Node object",
 			rawNodeIPs:     nil,
-			bindAddress:    "10.0.0.1",
+			nodeIPOverride: []string{"10.0.0.1"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "10.0.0.1",
 			expectedIPv6:   "::1",
@@ -705,7 +760,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address IPv6 unicast address and no Node object",
 			rawNodeIPs:     nil,
-			bindAddress:    "fd00:4321::2",
+			nodeIPOverride: []string{"fd00:4321::2"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "fd00:4321::2",
@@ -713,7 +768,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "No Valid IP found and no bind address",
 			rawNodeIPs:     nil,
-			bindAddress:    "",
+			nodeIPOverride: []string{},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "::1",
@@ -721,7 +776,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "No Valid IP found and unspecified bind address",
 			rawNodeIPs:     nil,
-			bindAddress:    "0.0.0.0",
+			nodeIPOverride: []string{"0.0.0.0"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "::1",
@@ -729,7 +784,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address 0.0.0.0 and node with IPv4 InternalIP set",
 			rawNodeIPs:     []net.IP{netutils.ParseIPSloppy("192.168.1.1")},
-			bindAddress:    "0.0.0.0",
+			nodeIPOverride: []string{"0.0.0.0"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "192.168.1.1",
 			expectedIPv6:   "::1",
@@ -737,7 +792,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address :: and node with IPv4 InternalIP set",
 			rawNodeIPs:     []net.IP{netutils.ParseIPSloppy("192.168.1.1")},
-			bindAddress:    "::",
+			nodeIPOverride: []string{"::"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "192.168.1.1",
 			expectedIPv6:   "::1",
@@ -745,7 +800,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address 0.0.0.0 and node with IPv6 InternalIP set",
 			rawNodeIPs:     []net.IP{netutils.ParseIPSloppy("fd00:1234::1")},
-			bindAddress:    "0.0.0.0",
+			nodeIPOverride: []string{"0.0.0.0"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "fd00:1234::1",
@@ -753,7 +808,7 @@ func Test_detectNodeIPs(t *testing.T) {
 		{
 			name:           "Bind address :: and node with IPv6 InternalIP set",
 			rawNodeIPs:     []net.IP{netutils.ParseIPSloppy("fd00:1234::1")},
-			bindAddress:    "::",
+			nodeIPOverride: []string{"::"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "fd00:1234::1",
@@ -764,7 +819,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("90.90.90.90"),
 				netutils.ParseIPSloppy("2001:db8::2"),
 			},
-			bindAddress:    "::",
+			nodeIPOverride: []string{"::"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "90.90.90.90",
 			expectedIPv6:   "2001:db8::2",
@@ -775,7 +830,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("2001:db8::2"),
 				netutils.ParseIPSloppy("90.90.90.90"),
 			},
-			bindAddress:    "0.0.0.0",
+			nodeIPOverride: []string{"0.0.0.0"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "90.90.90.90",
 			expectedIPv6:   "2001:db8::2",
@@ -786,7 +841,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("2001:db8::2"),
 				netutils.ParseIPSloppy("90.90.90.90"),
 			},
-			bindAddress:    "80.80.80.80",
+			nodeIPOverride: []string{"80.80.80.80"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "80.80.80.80",
 			expectedIPv6:   "2001:db8::2",
@@ -797,7 +852,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("90.90.90.90"),
 				netutils.ParseIPSloppy("2001:db8::2"),
 			},
-			bindAddress:    "2001:db8::555",
+			nodeIPOverride: []string{"2001:db8::555"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "90.90.90.90",
 			expectedIPv6:   "2001:db8::555",
@@ -808,7 +863,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("2001:db8::2"),
 				netutils.ParseIPSloppy("90.90.90.90"),
 			},
-			bindAddress:    "127.0.0.1",
+			nodeIPOverride: []string{"127.0.0.1"},
 			expectedFamily: v1.IPv4Protocol,
 			expectedIPv4:   "127.0.0.1",
 			expectedIPv6:   "2001:db8::2",
@@ -819,7 +874,7 @@ func Test_detectNodeIPs(t *testing.T) {
 				netutils.ParseIPSloppy("90.90.90.90"),
 				netutils.ParseIPSloppy("2001:db8::2"),
 			},
-			bindAddress:    "::1",
+			nodeIPOverride: []string{"::1"},
 			expectedFamily: v1.IPv6Protocol,
 			expectedIPv4:   "90.90.90.90",
 			expectedIPv6:   "::1",
@@ -828,7 +883,7 @@ func Test_detectNodeIPs(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			logger, _ := ktesting.NewTestContext(t)
-			primaryFamily, ips := detectNodeIPs(logger, c.rawNodeIPs, c.bindAddress)
+			primaryFamily, ips := detectNodeIPs(logger, c.rawNodeIPs, c.nodeIPOverride)
 			if primaryFamily != c.expectedFamily {
 				t.Errorf("Expected family %q got %q", c.expectedFamily, primaryFamily)
 			}
@@ -865,7 +920,9 @@ func Test_checkIPConfig(t *testing.T) {
 			name: "ok single-stack clusterCIDR",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					ClusterCIDR: "10.0.0.0/8",
+					DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+						ClusterCIDRs: []string{"10.0.0.0/8"},
+					},
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
 			},
@@ -876,7 +933,9 @@ func Test_checkIPConfig(t *testing.T) {
 			name: "ok dual-stack clusterCIDR",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					ClusterCIDR: "10.0.0.0/8,fd01:2345::/64",
+					DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+						ClusterCIDRs: []string{"10.0.0.0/8", "fd01:2345::/64"},
+					},
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
 			},
@@ -887,7 +946,9 @@ func Test_checkIPConfig(t *testing.T) {
 			name: "ok reversed dual-stack clusterCIDR",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					ClusterCIDR: "fd01:2345::/64,10.0.0.0/8",
+					DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+						ClusterCIDRs: []string{"fd01:2345::/64", "10.0.0.0/8"},
+					},
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
 			},
@@ -898,7 +959,9 @@ func Test_checkIPConfig(t *testing.T) {
 			name: "wrong-family clusterCIDR",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					ClusterCIDR: "fd01:2345::/64",
+					DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+						ClusterCIDRs: []string{"fd01:2345::/64"},
+					},
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
 			},
@@ -911,7 +974,9 @@ func Test_checkIPConfig(t *testing.T) {
 			name: "wrong-family clusterCIDR when using ClusterCIDR LocalDetector",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					ClusterCIDR:     "fd01:2345::/64",
+					DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
+						ClusterCIDRs: []string{"fd01:2345::/64"},
+					},
 					DetectLocalMode: kubeproxyconfig.LocalModeClusterCIDR,
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
@@ -1050,10 +1115,10 @@ func Test_checkIPConfig(t *testing.T) {
 		},
 
 		{
-			name: "ok IPv4 metricsBindAddress",
+			name: "ok IPv4 metricsBindAddresses",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					MetricsBindAddress: "10.0.0.1:9999",
+					MetricsBindAddresses: []string{"10.0.0.1/16"},
 				},
 				PrimaryIPFamily: v1.IPv4Protocol,
 			},
@@ -1061,10 +1126,10 @@ func Test_checkIPConfig(t *testing.T) {
 			dsErr: false,
 		},
 		{
-			name: "ok IPv6 metricsBindAddress",
+			name: "ok IPv6 metricsBindAddresses",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					MetricsBindAddress: "[fd01:2345::1]:9999",
+					MetricsBindAddresses: []string{"fd01:2345::1/48"},
 				},
 				PrimaryIPFamily: v1.IPv6Protocol,
 			},
@@ -1072,10 +1137,10 @@ func Test_checkIPConfig(t *testing.T) {
 			dsErr: false,
 		},
 		{
-			name: "ok unspecified wrong-family metricsBindAddress",
+			name: "ok unspecified wrong-family metricsBindAddresses",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					MetricsBindAddress: "0.0.0.0:9999",
+					MetricsBindAddresses: []string{"0.0.0.0/0"},
 				},
 				PrimaryIPFamily: v1.IPv6Protocol,
 			},
@@ -1083,10 +1148,10 @@ func Test_checkIPConfig(t *testing.T) {
 			dsErr: false,
 		},
 		{
-			name: "wrong family metricsBindAddress",
+			name: "wrong family metricsBindAddresses",
 			proxy: &ProxyServer{
 				Config: &kubeproxyconfig.KubeProxyConfiguration{
-					MetricsBindAddress: "10.0.0.1:9999",
+					MetricsBindAddresses: []string{"10.0.0.1/24"},
 				},
 				PrimaryIPFamily: v1.IPv6Protocol,
 			},

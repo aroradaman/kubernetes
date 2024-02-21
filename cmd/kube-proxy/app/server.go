@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -137,6 +138,17 @@ type Options struct {
 	hostnameOverride string
 
 	logger klog.Logger
+
+	// The fields below here are placeholders for deprecated flags that can't be directly mapped into
+	// config.KubeProxyConfiguration.
+	iptablesSyncPeriod    time.Duration
+	iptablesMinSyncPeriod time.Duration
+	ipvsSyncPeriod        time.Duration
+	ipvsMinSyncPeriod     time.Duration
+	clusterCIDR           string
+	bindAddress           string
+	healthzAddress        string
+	metricsAddress        string
 }
 
 // AddFlags adds flags to fs and binds them to options.
@@ -159,9 +171,14 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.Float32Var(&o.config.ClientConnection.QPS, "kube-api-qps", o.config.ClientConnection.QPS, "QPS to use while talking with kubernetes apiserver")
 
 	fs.StringVar(&o.hostnameOverride, "hostname-override", o.hostnameOverride, "If non-empty, will be used as the name of the Node that kube-proxy is running on. If unset, the node name is assumed to be the same as the node's hostname.")
-	fs.Var(&utilflag.IPVar{Val: &o.config.BindAddress}, "bind-address", "Overrides kube-proxy's idea of what its node's primary IP is. Note that the name is a historical artifact, and kube-proxy does not actually bind any sockets to this IP. This parameter is ignored if a config file is specified by --config.")
-	fs.Var(&utilflag.IPPortVar{Val: &o.config.HealthzBindAddress}, "healthz-bind-address", "The IP address and port for the health check server to serve on, defaulting to \"0.0.0.0:10256\" (if --bind-address is unset or IPv4), or \"[::]:10256\" (if --bind-address is IPv6). Set empty to disable. This parameter is ignored if a config file is specified by --config.")
-	fs.Var(&utilflag.IPPortVar{Val: &o.config.MetricsBindAddress}, "metrics-bind-address", "The IP address and port for the metrics server to serve on, defaulting to \"127.0.0.1:10249\" (if --bind-address is unset or IPv4), or \"[::1]:10249\" (if --bind-address is IPv6). (Set to \"0.0.0.0:10249\" / \"[::]:10249\" to bind on all interfaces.) Set empty to disable. This parameter is ignored if a config file is specified by --config.")
+	fs.StringSliceVar(&o.config.NodeIPOverride, "node-ip-override", o.config.NodeIPOverride, "Overrides kube-proxy's idea of what its node's primary IPs are. This parameter is ignored if a config file is specified by --config.")
+	fs.Var(&utilflag.IPVar{Val: &o.bindAddress}, "bind-address", "Overrides kube-proxy's idea of what its node's primary IP is. Note that the name is a historical artifact, and kube-proxy does not actually bind any sockets to this IP. This parameter is ignored if a config file is specified by --config.")
+	fs.Var(&utilflag.IPPortVar{Val: &o.healthzAddress}, "healthz-bind-address", "The IP address and port for the healthz server to serve on, defaulting to \"0.0.0.0:10256\" (if --bind-address is unset or IPv4), or \"[::]:10256\" (if --bind-address is IPv6). Set empty to disable. This parameter is ignored if a config file is specified by --config.")
+	fs.StringSliceVar(&o.config.HealthzBindAddresses, "healthz-bind-addresses", o.config.HealthzBindAddresses, "The is a list of CIDR ranges that contains a valid node IP on which healthz server will be served on. This parameter is ignored if a config file is specified by --config.")
+	fs.Int32Var(&o.config.HealthzBindPort, "healthz-bind-port", o.config.HealthzBindPort, "The port for the healthz server to serve on, defaulting to 10256. This parameter is ignored if a config file is specified by --config.")
+	fs.Var(&utilflag.IPPortVar{Val: &o.metricsAddress}, "metrics-bind-address", "The IP address and port for the metrics server to serve on, defaulting to \"127.0.0.1:10249\" (if --bind-address is unset or IPv4), or \"[::1]:10249\" (if --bind-address is IPv6). (Set to \"0.0.0.0:10249\" / \"[::]:10249\" to bind on all interfaces.) Set empty to disable. This parameter is ignored if a config file is specified by --config.")
+	fs.StringSliceVar(&o.config.MetricsBindAddresses, "metrics-bind-addresses", o.config.MetricsBindAddresses, "The is a list of CIDR ranges that contains a valid node IP on which metrics server will be served on. This parameter is ignored if a config file is specified by --config.")
+	fs.Int32Var(&o.config.MetricsBindPort, "metrics-bind-port", o.config.MetricsBindPort, "The port for the metrics server to serve on, defaulting to 10249. This parameter is ignored if a config file is specified by --config.")
 	fs.BoolVar(&o.config.BindAddressHardFail, "bind-address-hard-fail", o.config.BindAddressHardFail, "If true kube-proxy will treat failure to bind to a port as fatal and exit")
 	fs.BoolVar(&o.config.EnableProfiling, "profiling", o.config.EnableProfiling, "If true enables profiling via web interface on /debug/pprof handler. This parameter is ignored if a config file is specified by --config.")
 	fs.StringVar(&o.config.ShowHiddenMetricsForVersion, "show-hidden-metrics-for-version", o.config.ShowHiddenMetricsForVersion,
@@ -175,53 +192,62 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 	fs.Var(&o.config.Mode, "proxy-mode", "Which proxy mode to use: on Linux this can be 'iptables' (default) or 'ipvs'. On Windows the only supported value is 'kernelspace'."+
 		"This parameter is ignored if a config file is specified by --config.")
 
-	fs.Int32Var(o.config.IPTables.MasqueradeBit, "iptables-masquerade-bit", ptr.Deref(o.config.IPTables.MasqueradeBit, 14), "If using the iptables or ipvs proxy mode, the bit of the fwmark space to mark packets requiring SNAT with.  Must be within the range [0, 31].")
-	fs.BoolVar(&o.config.IPTables.MasqueradeAll, "masquerade-all", o.config.IPTables.MasqueradeAll, "If using the iptables or ipvs proxy mode, SNAT all traffic sent via Service cluster IPs. This may be required with some CNI plugins.")
-	fs.BoolVar(o.config.IPTables.LocalhostNodePorts, "iptables-localhost-nodeports", ptr.Deref(o.config.IPTables.LocalhostNodePorts, true), "If false, kube-proxy will disable the legacy behavior of allowing NodePort services to be accessed via localhost. (Applies only to iptables mode and IPv4; localhost NodePorts are never allowed with other proxy modes or with IPv6.)")
-	fs.DurationVar(&o.config.IPTables.SyncPeriod.Duration, "iptables-sync-period", o.config.IPTables.SyncPeriod.Duration, "An interval (e.g. '5s', '1m', '2h22m') indicating how frequently various re-synchronizing and cleanup operations are performed. Must be greater than 0.")
-	fs.DurationVar(&o.config.IPTables.MinSyncPeriod.Duration, "iptables-min-sync-period", o.config.IPTables.MinSyncPeriod.Duration, "The minimum period between iptables rule resyncs (e.g. '5s', '1m', '2h22m'). A value of 0 means every Service or EndpointSlice change will result in an immediate iptables resync.")
+	fs.DurationVar(&o.config.SyncPeriod.Duration, "sync-period", o.config.SyncPeriod.Duration, "An interval (e.g. '5s', '1m', '2h22m') indicating how frequently various re-synchronizing and cleanup operations are performed. Must be greater than 0.")
+	fs.DurationVar(&o.config.MinSyncPeriod.Duration, "min-sync-period", o.config.MinSyncPeriod.Duration, "The minimum period between proxier rule resyncs (e.g. '5s', '1m', '2h22m'). A value of 0 means every Service or EndpointSlice change will result in an immediate proxier resync.")
 
-	fs.DurationVar(&o.config.IPVS.SyncPeriod.Duration, "ipvs-sync-period", o.config.IPVS.SyncPeriod.Duration, "An interval (e.g. '5s', '1m', '2h22m') indicating how frequently various re-synchronizing and cleanup operations are performed. Must be greater than 0.")
-	fs.DurationVar(&o.config.IPVS.MinSyncPeriod.Duration, "ipvs-min-sync-period", o.config.IPVS.MinSyncPeriod.Duration, "The minimum period between IPVS rule resyncs (e.g. '5s', '1m', '2h22m'). A value of 0 means every Service or EndpointSlice change will result in an immediate IPVS resync.")
+	fs.BoolVar(&o.config.Linux.MasqueradeAll, "masquerade-all", o.config.Linux.MasqueradeAll, "If using the iptables proxy mode, SNAT all traffic sent via Service cluster IPs. This may be required with some CNI plugins.")
+
+	fs.Int32Var(o.config.IPTables.MasqueradeBit, "iptables-masquerade-bit", ptr.Deref(o.config.IPTables.MasqueradeBit, 14), "If using the iptables proxy mode, the bit of the fwmark space to mark packets requiring SNAT with. Must be within the range [0, 31].")
+	fs.BoolVar(o.config.IPTables.LocalhostNodePorts, "iptables-localhost-nodeports", ptr.Deref(o.config.IPTables.LocalhostNodePorts, true), "If false, kube-proxy will disable the legacy behavior of allowing NodePort services to be accessed via localhost. (Applies only to iptables mode and IPv4; localhost NodePorts are never allowed with other proxy modes or with IPv6.)")
+	fs.DurationVar(&o.iptablesSyncPeriod, "iptables-sync-period", o.iptablesSyncPeriod, "An interval (e.g. '5s', '1m', '2h22m') indicating how frequently various re-synchronizing and cleanup operations are performed. Must be greater than 0.")
+	fs.DurationVar(&o.iptablesMinSyncPeriod, "iptables-min-sync-period", o.iptablesMinSyncPeriod, "The minimum period between iptables rule resyncs (e.g. '5s', '1m', '2h22m'). A value of 0 means every Service or EndpointSlice change will result in an immediate iptables resync.")
+
+	fs.DurationVar(&o.ipvsSyncPeriod, "ipvs-sync-period", o.ipvsSyncPeriod, "An interval (e.g. '5s', '1m', '2h22m') indicating how frequently various re-synchronizing and cleanup operations are performed. Must be greater than 0.")
+	fs.DurationVar(&o.ipvsMinSyncPeriod, "ipvs-min-sync-period", o.ipvsMinSyncPeriod, "The minimum period between IPVS rule resyncs (e.g. '5s', '1m', '2h22m'). A value of 0 means every Service or EndpointSlice change will result in an immediate IPVS resync.")
 	fs.StringVar(&o.config.IPVS.Scheduler, "ipvs-scheduler", o.config.IPVS.Scheduler, "The ipvs scheduler type when proxy mode is ipvs")
 	fs.StringSliceVar(&o.config.IPVS.ExcludeCIDRs, "ipvs-exclude-cidrs", o.config.IPVS.ExcludeCIDRs, "A comma-separated list of CIDRs which the ipvs proxier should not touch when cleaning up IPVS rules.")
 	fs.BoolVar(&o.config.IPVS.StrictARP, "ipvs-strict-arp", o.config.IPVS.StrictARP, "Enable strict ARP by setting arp_ignore to 1 and arp_announce to 2")
 	fs.DurationVar(&o.config.IPVS.TCPTimeout.Duration, "ipvs-tcp-timeout", o.config.IPVS.TCPTimeout.Duration, "The timeout for idle IPVS TCP connections, 0 to leave as-is. (e.g. '5s', '1m', '2h22m').")
 	fs.DurationVar(&o.config.IPVS.TCPFinTimeout.Duration, "ipvs-tcpfin-timeout", o.config.IPVS.TCPFinTimeout.Duration, "The timeout for IPVS TCP connections after receiving a FIN packet, 0 to leave as-is. (e.g. '5s', '1m', '2h22m').")
 	fs.DurationVar(&o.config.IPVS.UDPTimeout.Duration, "ipvs-udp-timeout", o.config.IPVS.UDPTimeout.Duration, "The timeout for IPVS UDP packets, 0 to leave as-is. (e.g. '5s', '1m', '2h22m').")
+	fs.Int32Var(o.config.IPVS.MasqueradeBit, "ipvs-masquerade-bit", ptr.Deref(o.config.IPVS.MasqueradeBit, 14), "If using the ipvs proxy mode, the bit of the fwmark space to mark packets requiring SNAT with.  Must be within the range [0, 31].")
 
 	fs.Var(&o.config.DetectLocalMode, "detect-local-mode", "Mode to use to detect local traffic. This parameter is ignored if a config file is specified by --config.")
 	fs.StringVar(&o.config.DetectLocal.BridgeInterface, "pod-bridge-interface", o.config.DetectLocal.BridgeInterface, "A bridge interface name. When --detect-local-mode is set to BridgeInterface, kube-proxy will consider traffic to be local if it originates from this bridge.")
 	fs.StringVar(&o.config.DetectLocal.InterfaceNamePrefix, "pod-interface-name-prefix", o.config.DetectLocal.InterfaceNamePrefix, "An interface name prefix. When --detect-local-mode is set to InterfaceNamePrefix, kube-proxy will consider traffic to be local if it originates from any interface whose name begins with this prefix.")
-	fs.StringVar(&o.config.ClusterCIDR, "cluster-cidr", o.config.ClusterCIDR, "The CIDR range of the pods in the cluster. (For dual-stack clusters, this can be a comma-separated dual-stack pair of CIDR ranges.). When --detect-local-mode is set to ClusterCIDR, kube-proxy will consider traffic to be local if its source IP is in this range. (Otherwise it is not used.) "+
+	fs.StringSliceVar(&o.config.DetectLocal.ClusterCIDRs, "cluster-cidrs", o.config.DetectLocal.ClusterCIDRs, "The CIDR range of the pods in the cluster. When --detect-local-mode is set to ClusterCIDR, kube-proxy will consider traffic to be local if its source IP is in this range. (Otherwise it is not used.) "+
+		"This parameter is ignored if a config file is specified by --config.")
+	fs.StringVar(&o.clusterCIDR, "cluster-cidr", o.clusterCIDR, "The CIDR range of the pods in the cluster. (For dual-stack clusters, this can be a comma-separated dual-stack pair of CIDR ranges.). When --detect-local-mode is set to ClusterCIDR, kube-proxy will consider traffic to be local if its source IP is in this range. (Otherwise it is not used.) "+
 		"This parameter is ignored if a config file is specified by --config.")
 
 	fs.StringSliceVar(&o.config.NodePortAddresses, "nodeport-addresses", o.config.NodePortAddresses,
 		"A list of CIDR ranges that contain valid node IPs. If set, connections to NodePort services will only be accepted on node IPs in one of the indicated ranges. If unset, NodePort connections will be accepted on all local IPs. This parameter is ignored if a config file is specified by --config.")
 
-	fs.Int32Var(o.config.OOMScoreAdj, "oom-score-adj", ptr.Deref(o.config.OOMScoreAdj, int32(qos.KubeProxyOOMScoreAdj)), "The oom-score-adj value for kube-proxy process. Values must be within the range [-1000, 1000]. This parameter is ignored if a config file is specified by --config.")
-	fs.Int32Var(o.config.Conntrack.MaxPerCore, "conntrack-max-per-core", *o.config.Conntrack.MaxPerCore,
+	fs.Int32Var(o.config.Linux.OOMScoreAdj, "oom-score-adj", ptr.Deref(o.config.Linux.OOMScoreAdj, int32(qos.KubeProxyOOMScoreAdj)), "The oom-score-adj value for kube-proxy process. Values must be within the range [-1000, 1000]. This parameter is ignored if a config file is specified by --config.")
+	fs.Int32Var(o.config.Linux.Conntrack.MaxPerCore, "conntrack-max-per-core", *o.config.Linux.Conntrack.MaxPerCore,
 		"Maximum number of NAT connections to track per CPU core (0 to leave the limit as-is and ignore conntrack-min).")
-	fs.Int32Var(o.config.Conntrack.Min, "conntrack-min", *o.config.Conntrack.Min,
+	fs.Int32Var(o.config.Linux.Conntrack.Min, "conntrack-min", *o.config.Linux.Conntrack.Min,
 		"Minimum number of conntrack entries to allocate, regardless of conntrack-max-per-core (set conntrack-max-per-core=0 to leave the limit as-is).")
 
-	fs.DurationVar(&o.config.Conntrack.TCPEstablishedTimeout.Duration, "conntrack-tcp-timeout-established", o.config.Conntrack.TCPEstablishedTimeout.Duration, "Idle timeout for established TCP connections (0 to leave as-is)")
+	fs.DurationVar(&o.config.Linux.Conntrack.TCPEstablishedTimeout.Duration, "conntrack-tcp-timeout-established", o.config.Linux.Conntrack.TCPEstablishedTimeout.Duration, "Idle timeout for established TCP connections (0 to leave as-is)")
 	fs.DurationVar(
-		&o.config.Conntrack.TCPCloseWaitTimeout.Duration, "conntrack-tcp-timeout-close-wait",
-		o.config.Conntrack.TCPCloseWaitTimeout.Duration,
+		&o.config.Linux.Conntrack.TCPCloseWaitTimeout.Duration, "conntrack-tcp-timeout-close-wait",
+		o.config.Linux.Conntrack.TCPCloseWaitTimeout.Duration,
 		"NAT timeout for TCP connections in the CLOSE_WAIT state")
-	fs.BoolVar(&o.config.Conntrack.TCPBeLiberal, "conntrack-tcp-be-liberal", o.config.Conntrack.TCPBeLiberal, "Enable liberal mode for tracking TCP packets by setting nf_conntrack_tcp_be_liberal to 1")
-	fs.DurationVar(&o.config.Conntrack.UDPTimeout.Duration, "conntrack-udp-timeout", o.config.Conntrack.UDPTimeout.Duration, "Idle timeout for UNREPLIED UDP connections (0 to leave as-is)")
-	fs.DurationVar(&o.config.Conntrack.UDPStreamTimeout.Duration, "conntrack-udp-timeout-stream", o.config.Conntrack.UDPStreamTimeout.Duration, "Idle timeout for ASSURED UDP connections (0 to leave as-is)")
+	fs.BoolVar(&o.config.Linux.Conntrack.TCPBeLiberal, "conntrack-tcp-be-liberal", o.config.Linux.Conntrack.TCPBeLiberal, "Enable liberal mode for tracking TCP packets by setting nf_conntrack_tcp_be_liberal to 1")
+	fs.DurationVar(&o.config.Linux.Conntrack.UDPTimeout.Duration, "conntrack-udp-timeout", o.config.Linux.Conntrack.UDPTimeout.Duration, "Idle timeout for UNREPLIED UDP connections (0 to leave as-is)")
+	fs.DurationVar(&o.config.Linux.Conntrack.UDPStreamTimeout.Duration, "conntrack-udp-timeout-stream", o.config.Linux.Conntrack.UDPStreamTimeout.Duration, "Idle timeout for ASSURED UDP connections (0 to leave as-is)")
 
 	fs.DurationVar(&o.config.ConfigSyncPeriod.Duration, "config-sync-period", o.config.ConfigSyncPeriod.Duration, "How often configuration from the apiserver is refreshed.  Must be greater than 0.")
 
-	fs.Int32Var(&o.healthzPort, "healthz-port", o.healthzPort, "The port to bind the health check server. Use 0 to disable.")
-	_ = fs.MarkDeprecated("healthz-port", "This flag is deprecated and will be removed in a future release. Please use --healthz-bind-address instead.")
-	fs.Int32Var(&o.metricsPort, "metrics-port", o.metricsPort, "The port to bind the metrics server. Use 0 to disable.")
-	_ = fs.MarkDeprecated("metrics-port", "This flag is deprecated and will be removed in a future release. Please use --metrics-bind-address instead.")
-	fs.Var(utilflag.PortRangeVar{Val: &o.config.PortRange}, "proxy-port-range", "This was previously used to configure the userspace proxy, but is now unused.")
-	_ = fs.MarkDeprecated("proxy-port-range", "This flag has no effect and will be removed in a future release.")
+	_ = fs.MarkDeprecated("iptables-sync-period", "This flag is deprecated and will be removed in a future release. Please use --sync-period instead.")
+	_ = fs.MarkDeprecated("ipvs-sync-period", "This flag is deprecated and will be removed in a future release. Please use --sync-period instead.")
+	_ = fs.MarkDeprecated("iptables-min-sync-period", "This flag is deprecated and will be removed in a future release. Please use --min-sync-period instead.")
+	_ = fs.MarkDeprecated("ipvs-min-sync-period", "This flag is deprecated and will be removed in a future release. Please use --min-sync-period instead.")
+	_ = fs.MarkDeprecated("cluster-cidr", "This flag is deprecated and will be removed in a future release. Please use --cluster-cidrs instead.")
+	_ = fs.MarkDeprecated("bind-address", "This flag is deprecated and will be removed in a future release. Please use --node-ip-override instead.")
+	_ = fs.MarkDeprecated("healthz-bind-address", "This flag is deprecated and will be removed in a future release. Please use --healthz-bind-addresses and --healthz-bind-port instead.")
+	_ = fs.MarkDeprecated("metrics-bind-address", "This flag is deprecated and will be removed in a future release. Please use --metrics-bind-addresses and --metrics-bind-port instead.")
 
 	logsapi.AddFlags(&o.config.Logging, fs)
 }
@@ -251,11 +277,6 @@ func NewOptions() *Options {
 
 // Complete completes all the required options.
 func (o *Options) Complete(fs *pflag.FlagSet) error {
-	if len(o.ConfigFile) == 0 && len(o.WriteConfigTo) == 0 {
-		o.config.HealthzBindAddress = addressFromDeprecatedFlags(o.config.HealthzBindAddress, o.healthzPort)
-		o.config.MetricsBindAddress = addressFromDeprecatedFlags(o.config.MetricsBindAddress, o.metricsPort)
-	}
-
 	// Load the config file here in Complete, so that Validate validates the fully-resolved config.
 	if len(o.ConfigFile) > 0 {
 		c, err := o.loadConfigFromFile(o.ConfigFile)
@@ -275,6 +296,9 @@ func (o *Options) Complete(fs *pflag.FlagSet) error {
 		if err := o.initWatcher(); err != nil {
 			return err
 		}
+	} else {
+		// process the deprecated flags if config file is not passed.
+		o.processDeprecatedFlags(fs)
 	}
 
 	o.platformApplyDefaults(o.config)
@@ -359,6 +383,63 @@ func (o *Options) processHostnameOverrideFlag() error {
 	}
 
 	return nil
+}
+
+// processDeprecatedFlags processes deprecated flags which can't be directly mapped to internal config.
+func (o *Options) processDeprecatedFlags(fs *pflag.FlagSet) {
+	visited := make(map[string]bool)
+	fs.Visit(func(f *pflag.Flag) {
+		visited[f.Name] = true
+	})
+
+	fs.Visit(func(f *pflag.Flag) {
+		switch {
+		case f.Name == "iptables-sync-period" && !visited["sync-period"] && o.config.Mode == kubeproxyconfig.ProxyModeIPTables:
+			o.config.SyncPeriod.Duration = o.iptablesSyncPeriod
+		case f.Name == "iptables-min-sync-period" && !visited["sync-period"] && o.config.Mode == kubeproxyconfig.ProxyModeIPTables:
+			o.config.SyncPeriod.Duration = o.iptablesSyncPeriod
+		case f.Name == "ipvs-sync-period" && !visited["sync-period"] && o.config.Mode == kubeproxyconfig.ProxyModeIPVS:
+			o.config.SyncPeriod.Duration = o.ipvsSyncPeriod
+		case f.Name == "ipvs-min-sync-period" && !visited["sync-period"] && o.config.Mode == kubeproxyconfig.ProxyModeIPVS:
+			o.config.SyncPeriod.Duration = o.ipvsMinSyncPeriod
+		case f.Name == "cluster-cidr" && !visited["cluster-cidrs"]:
+			o.config.DetectLocal.ClusterCIDRs = strings.Split(o.clusterCIDR, ",")
+		case f.Name == "bind-address" && !visited["node-ip-override"]:
+			o.config.NodeIPOverride = []string{o.bindAddress}
+		case f.Name == "healthz-bind-address":
+			host, port, _ := net.SplitHostPort(o.healthzAddress)
+			if !visited["healthz-bind-addresses"] {
+				ip := netutils.ParseIPSloppy(host)
+				if ip.IsUnspecified() {
+					o.config.HealthzBindAddresses = []string{fmt.Sprintf("%s/0", host)}
+				} else if netutils.IsIPv4(ip) {
+					o.config.HealthzBindAddresses = []string{fmt.Sprintf("%s/32", host)}
+				} else {
+					o.config.HealthzBindAddresses = []string{fmt.Sprintf("%s/128", host)}
+				}
+			}
+			if !visited["healthz-bind-port"] {
+				intPort, _ := strconv.Atoi(port)
+				o.config.HealthzBindPort = int32(intPort)
+			}
+		case f.Name == "metrics-bind-address":
+			host, port, _ := net.SplitHostPort(o.healthzAddress)
+			if !visited["metrics-bind-addresses"] {
+				ip := netutils.ParseIPSloppy(host)
+				if ip.IsUnspecified() {
+					o.config.MetricsBindAddresses = []string{fmt.Sprintf("%s/0", host)}
+				} else if netutils.IsIPv4(ip) {
+					o.config.MetricsBindAddresses = []string{fmt.Sprintf("%s/32", host)}
+				} else {
+					o.config.MetricsBindAddresses = []string{fmt.Sprintf("%s/128", host)}
+				}
+			}
+			if !visited["metrics-bind-port"] {
+				intPort, _ := strconv.Atoi(port)
+				o.config.MetricsBindPort = int32(intPort)
+			}
+		}
+	})
 }
 
 // Validate validates all the required options.
@@ -629,7 +710,7 @@ func newProxyServer(logger klog.Logger, config *kubeproxyconfig.KubeProxyConfigu
 	}
 
 	rawNodeIPs := getNodeIPs(logger, s.Client, s.Hostname)
-	s.PrimaryIPFamily, s.NodeIPs = detectNodeIPs(logger, rawNodeIPs, config.BindAddress)
+	s.PrimaryIPFamily, s.NodeIPs = detectNodeIPs(logger, rawNodeIPs, config.NodeIPOverride)
 
 	s.Broadcaster = events.NewBroadcaster(&events.EventSinkImpl{Interface: s.Client.EventsV1()})
 	s.Recorder = s.Broadcaster.NewRecorder(proxyconfigscheme.Scheme, "kube-proxy")
@@ -641,8 +722,8 @@ func newProxyServer(logger klog.Logger, config *kubeproxyconfig.KubeProxyConfigu
 		Namespace: "",
 	}
 
-	if len(config.HealthzBindAddress) > 0 {
-		s.HealthzServer = healthcheck.NewProxierHealthServer(config.HealthzBindAddress, 2*config.IPTables.SyncPeriod.Duration)
+	if len(config.HealthzBindAddresses) > 0 {
+		s.HealthzServer = healthcheck.NewProxierHealthServer(config.HealthzBindAddresses, config.HealthzBindPort, 2*config.SyncPeriod.Duration)
 	}
 
 	err = s.platformSetup()
@@ -663,7 +744,7 @@ func newProxyServer(logger klog.Logger, config *kubeproxyconfig.KubeProxyConfigu
 
 	err, fatal := checkIPConfig(s, dualStackSupported)
 	if err != nil {
-		if fatal {
+		if fatal || (config.ConfigHardFail != nil && *config.ConfigHardFail) {
 			return nil, fmt.Errorf("kube-proxy configuration is incorrect: %v", err)
 		}
 		logger.Error(err, "Kube-proxy configuration may be incomplete or incorrect")
@@ -700,9 +781,8 @@ func checkIPConfig(s *ProxyServer, dualStackSupported bool) (error, bool) {
 	// new options to check here, we should make problems with those options be fatal.
 	fatal := false
 
-	if s.Config.ClusterCIDR != "" {
-		clusterCIDRs := strings.Split(s.Config.ClusterCIDR, ",")
-		if badCIDRs(clusterCIDRs, badFamily) {
+	if len(s.Config.DetectLocal.ClusterCIDRs) > 0 {
+		if badCIDRs(s.Config.DetectLocal.ClusterCIDRs, badFamily) {
 			errors = append(errors, fmt.Errorf("cluster is %s but clusterCIDRs contains only IPv%s addresses", clusterType, badFamily))
 			if s.Config.DetectLocalMode == kubeproxyconfig.LocalModeClusterCIDR && !dualStackSupported {
 				// This has always been a fatal error
@@ -734,40 +814,29 @@ func checkIPConfig(s *ProxyServer, dualStackSupported bool) (error, bool) {
 			errors = append(errors, fmt.Errorf("cluster is %s but ipvs.excludeCIDRs contains only IPv%s addresses", clusterType, badFamily))
 		}
 
-		if badBindAddress(s.Config.HealthzBindAddress, badFamily) {
-			errors = append(errors, fmt.Errorf("cluster is %s but healthzBindAddress is IPv%s", clusterType, badFamily))
+		if badCIDRs(s.Config.HealthzBindAddresses, badFamily) {
+			errors = append(errors, fmt.Errorf("cluster is %s but healthzBindAddresses contains only IPv%s addresses", clusterType, badFamily))
 		}
-		if badBindAddress(s.Config.MetricsBindAddress, badFamily) {
-			errors = append(errors, fmt.Errorf("cluster is %s but metricsBindAddress is IPv%s", clusterType, badFamily))
+		if badCIDRs(s.Config.MetricsBindAddresses, badFamily) {
+			errors = append(errors, fmt.Errorf("cluster is %s but metricsBindAddresses contains only IPv%s addresses", clusterType, badFamily))
 		}
 	}
 
 	return utilerrors.NewAggregate(errors), fatal
 }
 
-// badCIDRs returns true if cidrs is a non-empty list of CIDRs, all of wrongFamily.
+// badCIDRs returns true if cidrs is a non-empty list of CIDRs, all of wrongFamily or contains an unspecified cidr.
 func badCIDRs(cidrs []string, wrongFamily netutils.IPFamily) bool {
 	if len(cidrs) == 0 {
 		return false
 	}
 	for _, cidr := range cidrs {
-		if netutils.IPFamilyOfCIDRString(cidr) != wrongFamily {
+		ip, _, _ := netutils.ParseCIDRSloppy(cidr)
+		if ip.IsUnspecified() || netutils.IPFamilyOfCIDRString(cidr) != wrongFamily {
 			return false
 		}
 	}
 	return true
-}
-
-// badBindAddress returns true if bindAddress is an "IP:port" string where IP is a
-// non-zero IP of wrongFamily.
-func badBindAddress(bindAddress string, wrongFamily netutils.IPFamily) bool {
-	if host, _, _ := net.SplitHostPort(bindAddress); host != "" {
-		ip := netutils.ParseIPSloppy(host)
-		if ip != nil && netutils.IPFamilyOf(ip) == wrongFamily && !ip.IsUnspecified() {
-			return true
-		}
-	}
-	return false
 }
 
 // createClient creates a kube client from the given config and masterOverride.
@@ -803,33 +872,7 @@ func createClient(logger klog.Logger, config componentbaseconfig.ClientConnectio
 	return client, nil
 }
 
-func serveHealthz(logger klog.Logger, hz *healthcheck.ProxierHealthServer, errCh chan error) {
-	if hz == nil {
-		return
-	}
-
-	fn := func() {
-		err := hz.Run()
-		if err != nil {
-			logger.Error(err, "Healthz server failed")
-			if errCh != nil {
-				errCh <- fmt.Errorf("healthz server failed: %v", err)
-				// if in hardfail mode, never retry again
-				blockCh := make(chan error)
-				<-blockCh
-			}
-		} else {
-			logger.Error(nil, "Healthz server returned without error")
-		}
-	}
-	go wait.Until(fn, 5*time.Second, wait.NeverStop)
-}
-
-func serveMetrics(bindAddress string, proxyMode kubeproxyconfig.ProxyMode, enableProfiling bool, errCh chan error) {
-	if len(bindAddress) == 0 {
-		return
-	}
-
+func serveMetrics(logger klog.Logger, cidrStrings []string, port int32, proxyMode kubeproxyconfig.ProxyMode, enableProfiling bool, bindHardFail bool) chan error {
 	proxyMux := mux.NewPathRecorderMux("kube-proxy")
 	healthz.InstallHandler(proxyMux)
 	slis.SLIMetricsWithReset{}.Install(proxyMux)
@@ -849,23 +892,40 @@ func serveMetrics(bindAddress string, proxyMode kubeproxyconfig.ProxyMode, enabl
 
 	configz.InstallHandler(proxyMux)
 
-	fn := func() {
-		err := http.ListenAndServe(bindAddress, proxyMux)
+	var nodeIPs []net.IP
+	for _, family := range []v1.IPFamily{v1.IPv4Protocol, v1.IPv6Protocol} {
+		npa := proxyutil.NewNodePortAddresses(family, cidrStrings, nil)
+		ips, err := npa.GetNodeIPs(proxyutil.RealNetwork{})
 		if err != nil {
-			err = fmt.Errorf("starting metrics server failed: %v", err)
-			utilruntime.HandleError(err)
-			if errCh != nil {
-				errCh <- err
-				// if in hardfail mode, never retry again
-				blockCh := make(chan error)
-				<-blockCh
+			logger.Error(err, "failed to get get node ips for metrics server")
+		}
+		nodeIPs = append(nodeIPs, ips...)
+	}
+	if len(nodeIPs) == 0 {
+		logger.Info("failed to get any node ip matching metricsBindAddresses", "metricsBindAddresses", cidrStrings)
+	}
+
+	errCh := make(chan error)
+	for _, nodeIP := range nodeIPs {
+		stopCh := make(chan struct{})
+		addr := net.JoinHostPort(nodeIP.String(), strconv.Itoa(int(port)))
+		fn := func() {
+			err := http.ListenAndServe(addr, proxyMux)
+			if err != nil {
+				err = fmt.Errorf("starting metrics server failed: %v", err)
+				utilruntime.HandleError(err)
+				if err != nil && bindHardFail {
+					stopCh <- struct{}{}
+					errCh <- err
+				}
 			}
 		}
+		go wait.Until(fn, 5*time.Second, stopCh)
 	}
-	go wait.Until(fn, 5*time.Second, wait.NeverStop)
+	return errCh
 }
 
-// Run runs the specified ProxyServer.  This should never exit (unless CleanupAndExit is set).
+// Run runs the specified ProxyServer. This should never exit (unless CleanupAndExit is set).
 // TODO: At the moment, Run() cannot return a nil error, otherwise it's caller will never exit. Update callers of Run to handle nil errors.
 func (s *ProxyServer) Run() error {
 	// To help debugging, immediately log version
@@ -875,9 +935,9 @@ func (s *ProxyServer) Run() error {
 
 	// TODO(vmarmol): Use container config for this.
 	var oomAdjuster *oom.OOMAdjuster
-	if s.Config.OOMScoreAdj != nil {
+	if s.Config.Linux.OOMScoreAdj != nil {
 		oomAdjuster = oom.NewOOMAdjuster()
-		if err := oomAdjuster.ApplyOOMScoreAdj(0, int(*s.Config.OOMScoreAdj)); err != nil {
+		if err := oomAdjuster.ApplyOOMScoreAdj(0, int(*s.Config.Linux.OOMScoreAdj)); err != nil {
 			s.logger.V(2).Info("Failed to apply OOMScore", "err", err)
 		}
 	}
@@ -888,18 +948,17 @@ func (s *ProxyServer) Run() error {
 	}
 
 	// TODO(thockin): make it possible for healthz and metrics to be on the same port.
-
-	var healthzErrCh, metricsErrCh chan error
-	if s.Config.BindAddressHardFail {
-		healthzErrCh = make(chan error)
-		metricsErrCh = make(chan error)
+	// Start up a healthz server if requested
+	var healthzErrCh chan error
+	if s.HealthzServer != nil {
+		healthzErrCh = s.HealthzServer.Run(s.Config.BindAddressHardFail)
 	}
 
-	// Start up a healthz server if requested
-	serveHealthz(s.logger, s.HealthzServer, healthzErrCh)
-
 	// Start up a metrics server if requested
-	serveMetrics(s.Config.MetricsBindAddress, s.Config.Mode, s.Config.EnableProfiling, metricsErrCh)
+	var metricsErrCh chan error
+	if len(s.Config.MetricsBindAddresses) > 0 {
+		metricsErrCh = serveMetrics(s.logger, s.Config.MetricsBindAddresses, s.Config.MetricsBindPort, s.Config.Mode, s.Config.EnableProfiling, s.Config.BindAddressHardFail)
+	}
 
 	noProxyName, err := labels.NewRequirement(apis.LabelServiceProxyName, selection.DoesNotExist, nil)
 	if err != nil {
@@ -995,7 +1054,7 @@ func (s *ProxyServer) birthCry() {
 //  1. if bindAddress is not 0.0.0.0 or ::, then it is used as the primary IP.
 //  2. if rawNodeIPs is not empty, then its address(es) is/are used
 //  3. otherwise the node IPs are 127.0.0.1 and ::1
-func detectNodeIPs(logger klog.Logger, rawNodeIPs []net.IP, bindAddress string) (v1.IPFamily, map[v1.IPFamily]net.IP) {
+func detectNodeIPs(logger klog.Logger, rawNodeIPs []net.IP, nodeIPOverride []string) (v1.IPFamily, map[v1.IPFamily]net.IP) {
 	primaryFamily := v1.IPv4Protocol
 	nodeIPs := map[v1.IPFamily]net.IP{
 		v1.IPv4Protocol: net.IPv4(127, 0, 0, 1),
@@ -1018,14 +1077,16 @@ func detectNodeIPs(logger klog.Logger, rawNodeIPs []net.IP, bindAddress string) 
 	}
 
 	// If a bindAddress is passed, override the primary IP
-	bindIP := netutils.ParseIPSloppy(bindAddress)
-	if bindIP != nil && !bindIP.IsUnspecified() {
-		if netutils.IsIPv4(bindIP) {
-			primaryFamily = v1.IPv4Protocol
-		} else {
-			primaryFamily = v1.IPv6Protocol
+	for _, addr := range nodeIPOverride {
+		nodeIP := netutils.ParseIPSloppy(addr)
+		if nodeIP != nil && !nodeIP.IsUnspecified() {
+			if netutils.IsIPv4(nodeIP) {
+				primaryFamily = v1.IPv4Protocol
+			} else {
+				primaryFamily = v1.IPv6Protocol
+			}
+			nodeIPs[primaryFamily] = nodeIP
 		}
-		nodeIPs[primaryFamily] = bindIP
 	}
 
 	if nodeIPs[primaryFamily].IsLoopback() {

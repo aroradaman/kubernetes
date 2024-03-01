@@ -69,6 +69,7 @@ import (
 	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 	"k8s.io/kube-proxy/config/v1alpha1"
+	"k8s.io/kube-proxy/config/v1alpha2"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/cluster/ports"
 	"k8s.io/kubernetes/pkg/features"
@@ -78,6 +79,7 @@ import (
 	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
 	proxyconfigscheme "k8s.io/kubernetes/pkg/proxy/apis/config/scheme"
 	kubeproxyconfigv1alpha1 "k8s.io/kubernetes/pkg/proxy/apis/config/v1alpha1"
+	kubeproxyconfigv1alpha2 "k8s.io/kubernetes/pkg/proxy/apis/config/v1alpha2"
 	"k8s.io/kubernetes/pkg/proxy/apis/config/validation"
 	"k8s.io/kubernetes/pkg/proxy/config"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
@@ -505,7 +507,7 @@ func (o *Options) writeConfigFile() (err error) {
 		return fmt.Errorf("unable to locate encoder -- %q is not a supported media type", mediaType)
 	}
 
-	encoder := proxyconfigscheme.Codecs.EncoderForVersion(info.Serializer, v1alpha1.SchemeGroupVersion)
+	encoder := proxyconfigscheme.Codecs.EncoderForVersion(info.Serializer, v1alpha2.SchemeGroupVersion)
 
 	configFile, err := os.Create(o.WriteConfigTo)
 	if err != nil {
@@ -548,6 +550,9 @@ func newLenientSchemeAndCodecs() (*runtime.Scheme, *serializer.CodecFactory, err
 	}
 	if err := kubeproxyconfigv1alpha1.AddToScheme(lenientScheme); err != nil {
 		return nil, nil, fmt.Errorf("failed to add kube-proxy config v1alpha1 API to lenient scheme: %v", err)
+	}
+	if err := kubeproxyconfigv1alpha2.AddToScheme(lenientScheme); err != nil {
+		return nil, nil, fmt.Errorf("failed to add kube-proxy config v1alpha2 API to lenient scheme: %v", err)
 	}
 	lenientCodecs := serializer.NewCodecFactory(lenientScheme, serializer.DisableStrict)
 	return lenientScheme, &lenientCodecs, nil

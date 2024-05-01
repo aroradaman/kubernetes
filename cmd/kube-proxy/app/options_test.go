@@ -18,8 +18,10 @@ package app
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +97,11 @@ nodePortAddresses:
 		healthzBindAddress string
 		metricsBindAddress string
 		extraConfig        string
+
+		expectedHealthzBindAddresses []string
+		expectedHealthzPort          int32
+		expectedMetricsBindAddresses []string
+		expectedMetricsPort          int32
 	}{
 		{
 			name:               "iptables mode, IPv4 all-zeros bind address",
@@ -103,6 +110,11 @@ nodePortAddresses:
 			clusterCIDR:        "1.2.3.0/24",
 			healthzBindAddress: "1.2.3.4:12345",
 			metricsBindAddress: "2.3.4.5:23456",
+
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			name:               "iptables mode, non-zeros IPv4 config",
@@ -111,6 +123,11 @@ nodePortAddresses:
 			clusterCIDR:        "1.2.3.0/24",
 			healthzBindAddress: "1.2.3.4:12345",
 			metricsBindAddress: "2.3.4.5:23456",
+
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: "::"' (IPv6 all-zeros) in kube-proxy
@@ -122,6 +139,11 @@ nodePortAddresses:
 			clusterCIDR:        "fd00:1::0/64",
 			healthzBindAddress: "[fd00:1::5]:12345",
 			metricsBindAddress: "[fd00:2::5]:23456",
+
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: "[::]"' (IPv6 all-zeros in brackets)
@@ -134,6 +156,11 @@ nodePortAddresses:
 			clusterCIDR:        "fd00:1::0/64",
 			healthzBindAddress: "[fd00:1::5]:12345",
 			metricsBindAddress: "[fd00:2::5]:23456",
+
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for 'bindAddress: ::0' (another form of IPv6 all-zeros).
@@ -144,6 +171,11 @@ nodePortAddresses:
 			clusterCIDR:        "fd00:1::0/64",
 			healthzBindAddress: "[fd00:1::5]:12345",
 			metricsBindAddress: "[fd00:2::5]:23456",
+
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			name:               "ipvs mode, IPv6 config",
@@ -152,6 +184,11 @@ nodePortAddresses:
 			clusterCIDR:        "fd00:1::0/64",
 			healthzBindAddress: "[fd00:1::5]:12345",
 			metricsBindAddress: "[fd00:2::5]:23456",
+
+			expectedHealthzBindAddresses: []string{"fd00:1::5/128"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"fd00:2::5/128"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for unknown field within config.
@@ -164,6 +201,11 @@ nodePortAddresses:
 			healthzBindAddress: "1.2.3.4:12345",
 			metricsBindAddress: "2.3.4.5:23456",
 			extraConfig:        "foo: bar",
+
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 		{
 			// Test for duplicate field within config.
@@ -176,6 +218,11 @@ nodePortAddresses:
 			healthzBindAddress: "1.2.3.4:12345",
 			metricsBindAddress: "2.3.4.5:23456",
 			extraConfig:        "bindAddress: 9.8.7.6",
+
+			expectedHealthzBindAddresses: []string{"1.2.3.4/32"},
+			expectedHealthzPort:          int32(12345),
+			expectedMetricsBindAddresses: []string{"2.3.4.5/32"},
+			expectedMetricsPort:          int32(23456),
 		},
 	}
 
@@ -187,7 +234,7 @@ nodePortAddresses:
 				expBindAddr = expBindAddr[1 : len(tc.bindAddress)-1]
 			}
 			expected := &kubeproxyconfig.KubeProxyConfiguration{
-				BindAddress: expBindAddr,
+				NodeIPOverride: []string{expBindAddr},
 				ClientConnection: componentbaseconfig.ClientConnectionConfiguration{
 					AcceptContentTypes: "abc",
 					Burst:              100,
@@ -195,43 +242,42 @@ nodePortAddresses:
 					Kubeconfig:         "/path/to/kubeconfig",
 					QPS:                7,
 				},
-				ClusterCIDR:      tc.clusterCIDR,
+				MinSyncPeriod:    metav1.Duration{Duration: 10 * time.Second},
+				SyncPeriod:       metav1.Duration{Duration: 60 * time.Second},
 				ConfigSyncPeriod: metav1.Duration{Duration: 15 * time.Second},
-				Conntrack: kubeproxyconfig.KubeProxyConntrackConfiguration{
-					MaxPerCore:            ptr.To[int32](2),
-					Min:                   ptr.To[int32](1),
-					TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
-					TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
+				Linux: kubeproxyconfig.KubeProxyLinuxConfiguration{
+					Conntrack: kubeproxyconfig.KubeProxyConntrackConfiguration{
+						MaxPerCore:            ptr.To[int32](2),
+						Min:                   ptr.To[int32](1),
+						TCPCloseWaitTimeout:   &metav1.Duration{Duration: 10 * time.Second},
+						TCPEstablishedTimeout: &metav1.Duration{Duration: 20 * time.Second},
+					},
+					OOMScoreAdj:   ptr.To[int32](17),
+					MasqueradeAll: true,
 				},
-				FeatureGates:       map[string]bool{},
-				HealthzBindAddress: tc.healthzBindAddress,
-				HostnameOverride:   "foo",
+				FeatureGates:         map[string]bool{},
+				HealthzBindAddresses: tc.expectedHealthzBindAddresses,
+				HealthzBindPort:      tc.expectedHealthzPort,
+				HostnameOverride:     "foo",
 				IPTables: kubeproxyconfig.KubeProxyIPTablesConfiguration{
-					MasqueradeAll:      true,
 					MasqueradeBit:      ptr.To[int32](17),
 					LocalhostNodePorts: ptr.To(true),
-					MinSyncPeriod:      metav1.Duration{Duration: 10 * time.Second},
-					SyncPeriod:         metav1.Duration{Duration: 60 * time.Second},
 				},
 				IPVS: kubeproxyconfig.KubeProxyIPVSConfiguration{
-					MinSyncPeriod: metav1.Duration{Duration: 10 * time.Second},
-					SyncPeriod:    metav1.Duration{Duration: 60 * time.Second},
+					MasqueradeBit: ptr.To[int32](17),
 					ExcludeCIDRs:  []string{"10.20.30.40/16", "fd00:1::0/64"},
 				},
 				NFTables: kubeproxyconfig.KubeProxyNFTablesConfiguration{
-					MasqueradeAll: true,
 					MasqueradeBit: ptr.To[int32](18),
-					MinSyncPeriod: metav1.Duration{Duration: 10 * time.Second},
-					SyncPeriod:    metav1.Duration{Duration: 60 * time.Second},
 				},
-				MetricsBindAddress: tc.metricsBindAddress,
-				Mode:               kubeproxyconfig.ProxyMode(tc.mode),
-				OOMScoreAdj:        ptr.To[int32](17),
-				PortRange:          "2-7",
-				NodePortAddresses:  []string{"10.20.30.40/16", "fd00:1::0/64"},
-				DetectLocalMode:    kubeproxyconfig.LocalModeClusterCIDR,
+				MetricsBindAddresses: tc.expectedMetricsBindAddresses,
+				MetricsBindPort:      tc.expectedMetricsPort,
+				Mode:                 kubeproxyconfig.ProxyMode(tc.mode),
+				NodePortAddresses:    []string{"10.20.30.40/16", "fd00:1::0/64"},
+				DetectLocalMode:      kubeproxyconfig.LocalModeClusterCIDR,
 				DetectLocal: kubeproxyconfig.DetectLocalConfiguration{
 					BridgeInterface:     "cbr0",
+					ClusterCIDRs:        strings.Split(tc.clusterCIDR, ","),
 					InterfaceNamePrefix: "veth",
 				},
 				Logging: logsapi.LoggingConfiguration{
@@ -329,28 +375,34 @@ func TestLoadConfigFailures(t *testing.T) {
 	}
 }
 
-// TestProcessHostnameOverrideFlag tests processing hostname-override arg
-func TestProcessHostnameOverrideFlag(t *testing.T) {
+// TestProcessMaintainedFlags tests processing hostname-override and nodeIPOverride
+func TestProcessMaintainedFlags(t *testing.T) {
 	testCases := []struct {
-		name                 string
-		hostnameOverrideFlag string
-		expectedHostname     string
-		expectError          bool
+		name                   string
+		hostnameOverrideFlag   string
+		nodeIPOverrideFlag     string
+		expectedHostname       string
+		expectedNodeIPOverride []string
+		expectError            bool
 	}{
 		{
-			name:                 "Hostname from config file",
-			hostnameOverrideFlag: "",
-			expectedHostname:     "foo",
-			expectError:          false,
+			name:                   "args from config file",
+			hostnameOverrideFlag:   "",
+			nodeIPOverrideFlag:     "",
+			expectedHostname:       "foo",
+			expectedNodeIPOverride: []string{"10.10.10.1", "fd01:2345::1"},
+			expectError:            false,
 		},
 		{
-			name:                 "Hostname from flag",
-			hostnameOverrideFlag: "  bar ",
-			expectedHostname:     "bar",
-			expectError:          false,
+			name:                   "args from flag",
+			hostnameOverrideFlag:   "  bar ",
+			nodeIPOverrideFlag:     strings.Join([]string{"192.168.20.1", "fd01:5432::1"}, ","),
+			expectedHostname:       "bar",
+			expectedNodeIPOverride: []string{"192.168.20.1", "fd01:5432::1"},
+			expectError:            false,
 		},
 		{
-			name:                 "Hostname is space",
+			name:                 "args are empty",
 			hostnameOverrideFlag: "   ",
 			expectError:          true,
 		},
@@ -360,11 +412,12 @@ func TestProcessHostnameOverrideFlag(t *testing.T) {
 			options := NewOptions()
 			options.config = &kubeproxyconfig.KubeProxyConfiguration{
 				HostnameOverride: "foo",
+				NodeIPOverride:   []string{"10.10.10.1", "fd01:2345::1"},
 			}
 
 			options.hostnameOverride = tc.hostnameOverrideFlag
 
-			err := options.processHostnameOverrideFlag()
+			err := options.processMaintainedFlags()
 			if tc.expectError {
 				if err == nil {
 					t.Fatalf("should error for this case %s", tc.name)
@@ -375,6 +428,110 @@ func TestProcessHostnameOverrideFlag(t *testing.T) {
 					t.Fatalf("expected hostname: %s, but got: %s", tc.expectedHostname, options.config.HostnameOverride)
 				}
 			}
+		})
+	}
+}
+
+// TestProcessMaintainedFlags tests processing maintained flags.
+func TestProcessIncompatibleFlags(t *testing.T) {
+	testCases := []struct {
+		name     string
+		flags    []string
+		validate func(*kubeproxyconfig.KubeProxyConfiguration) bool
+	}{
+		{
+			name: "iptables configuration",
+			flags: []string{
+				"--iptables-sync-period=36s",
+				"--iptables-min-sync-period=3s",
+				"--proxy-mode=iptables",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				syncPeriod := metav1.Duration{Duration: 36 * time.Second}
+				minSyncPeriod := metav1.Duration{Duration: 3 * time.Second}
+				if config.SyncPeriod == syncPeriod &&
+					config.MinSyncPeriod == minSyncPeriod {
+					return true
+				}
+				return false
+			},
+		},
+		{
+			name: "ipvs configuration",
+			flags: []string{
+				"--ipvs-sync-period=16s",
+				"--ipvs-min-sync-period=7s",
+				"--proxy-mode=ipvs",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				syncPeriod := metav1.Duration{Duration: 16 * time.Second}
+				minSyncPeriod := metav1.Duration{Duration: 7 * time.Second}
+				if config.SyncPeriod == syncPeriod &&
+					config.MinSyncPeriod == minSyncPeriod {
+					return true
+				}
+				return false
+			},
+		},
+		{
+			name: "metrics and healthz address ipv4",
+			flags: []string{
+				"--healthz-bind-address=0.0.0.0:54321",
+				"--metrics-bind-address=127.0.0.1:3306",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				if reflect.DeepEqual(config.HealthzBindAddresses, []string{"0.0.0.0/0"}) &&
+					reflect.DeepEqual(config.MetricsBindAddresses, []string{"127.0.0.1/32"}) &&
+					config.HealthzBindPort == 54321 && config.MetricsBindPort == 3306 {
+					return true
+				}
+				return false
+			},
+		},
+		{
+			name: "metrics and healthz address ipv6",
+			flags: []string{
+				"--healthz-bind-address=[::]:9090",
+				"--metrics-bind-address=[::1]:8080",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				if reflect.DeepEqual(config.HealthzBindAddresses, []string{"::/0"}) &&
+					reflect.DeepEqual(config.MetricsBindAddresses, []string{"::1/128"}) &&
+					config.HealthzBindPort == 9090 && config.MetricsBindPort == 8080 {
+					return true
+				}
+				return false
+			},
+		},
+		{
+			name: "bind address",
+			flags: []string{
+				"--bind-address=0.0.0.0",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				return reflect.DeepEqual(config.NodeIPOverride, []string{"0.0.0.0"})
+			},
+		},
+		{
+			name: "cluster cidr",
+			flags: []string{
+				"--cluster-cidr=2002:0:0:1234::/64,10.0.0.0/14",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				return reflect.DeepEqual(config.DetectLocal.ClusterCIDRs, []string{"2002:0:0:1234::/64", "10.0.0.0/14"})
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			options := NewOptions()
+			fs := new(pflag.FlagSet)
+			options.AddFlags(fs)
+			require.NoError(t, fs.Parse(tc.flags))
+
+			options.processIncompatibleFlags(fs)
+			require.True(t, tc.validate(options.config))
 		})
 	}
 }
@@ -495,82 +652,12 @@ kind: KubeProxyConfiguration
 			if len(tc.config) > 0 {
 				tmp := t.TempDir()
 				configFile := path.Join(tmp, "kube-proxy.conf")
-				require.NoError(t, ioutil.WriteFile(configFile, []byte(tc.config), 0666))
+				require.NoError(t, os.WriteFile(configFile, []byte(tc.config), 0666))
 				flags = append(flags, "--config", configFile)
 			}
 			require.NoError(t, fs.Parse(flags))
 			require.NoError(t, options.Complete(fs))
 			assert.Equal(t, tc.expected, options.config)
 		})
-	}
-}
-
-func TestAddressFromDeprecatedFlags(t *testing.T) {
-	testCases := []struct {
-		name               string
-		healthzPort        int32
-		healthzBindAddress string
-		metricsPort        int32
-		metricsBindAddress string
-		expHealthz         string
-		expMetrics         string
-	}{
-		{
-			name:               "IPv4 bind address",
-			healthzBindAddress: "1.2.3.4",
-			healthzPort:        12345,
-			metricsBindAddress: "2.3.4.5",
-			metricsPort:        23456,
-			expHealthz:         "1.2.3.4:12345",
-			expMetrics:         "2.3.4.5:23456",
-		},
-		{
-			name:               "IPv4 bind address has port",
-			healthzBindAddress: "1.2.3.4:12345",
-			healthzPort:        23456,
-			metricsBindAddress: "2.3.4.5:12345",
-			metricsPort:        23456,
-			expHealthz:         "1.2.3.4:12345",
-			expMetrics:         "2.3.4.5:12345",
-		},
-		{
-			name:               "IPv6 bind address",
-			healthzBindAddress: "fd00:1::5",
-			healthzPort:        12345,
-			metricsBindAddress: "fd00:1::6",
-			metricsPort:        23456,
-			expHealthz:         "[fd00:1::5]:12345",
-			expMetrics:         "[fd00:1::6]:23456",
-		},
-		{
-			name:               "IPv6 bind address has port",
-			healthzBindAddress: "[fd00:1::5]:12345",
-			healthzPort:        56789,
-			metricsBindAddress: "[fd00:1::6]:56789",
-			metricsPort:        12345,
-			expHealthz:         "[fd00:1::5]:12345",
-			expMetrics:         "[fd00:1::6]:56789",
-		},
-		{
-			name:               "Invalid IPv6 Config",
-			healthzBindAddress: "[fd00:1::5]",
-			healthzPort:        12345,
-			metricsBindAddress: "[fd00:1::6]",
-			metricsPort:        56789,
-			expHealthz:         "[fd00:1::5]",
-			expMetrics:         "[fd00:1::6]",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-
-			gotHealthz := addressFromDeprecatedFlags(tc.healthzBindAddress, tc.healthzPort)
-			gotMetrics := addressFromDeprecatedFlags(tc.metricsBindAddress, tc.metricsPort)
-
-			assert.Equal(t, tc.expHealthz, gotHealthz)
-			assert.Equal(t, tc.expMetrics, gotMetrics)
-		})
-
 	}
 }

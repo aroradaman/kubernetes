@@ -22,16 +22,25 @@ import (
 	logsapi "k8s.io/component-base/logs/api/v1"
 )
 
+// KubeProxyLinuxConfiguration contains linux-platform-related configuration details for the
+// Kubernetes proxy server that aren't specific to a particular backend.
+type KubeProxyLinuxConfiguration struct {
+	// conntrack contains conntrack-related configuration options.
+	Conntrack KubeProxyConntrackConfiguration
+	// masqueradeAll tells kube-proxy to SNAT all traffic sent to Service cluster IPs. This may
+	// be required with some CNI plugins.
+	MasqueradeAll bool
+	// oomScoreAdj is the oom-score-adj value for kube-proxy process. Values must be within
+	// the range [-1000, 1000]
+	OOMScoreAdj *int32
+}
+
 // KubeProxyIPTablesConfiguration contains iptables-related configuration
 // details for the Kubernetes proxy server.
 type KubeProxyIPTablesConfiguration struct {
 	// masqueradeBit is the bit of the iptables fwmark space to use for SNAT if using
 	// the iptables or ipvs proxy mode. Values must be within the range [0, 31].
 	MasqueradeBit *int32
-	// masqueradeAll tells kube-proxy to SNAT all traffic sent to Service cluster IPs,
-	// when using the iptables or ipvs proxy mode. This may be required with some CNI
-	// plugins.
-	MasqueradeAll bool
 	// localhostNodePorts, if false, tells kube-proxy to disable the legacy behavior
 	// of allowing NodePort services to be accessed via localhost. (Applies only to
 	// iptables mode and IPv4; localhost NodePorts are never allowed with other proxy
@@ -83,9 +92,6 @@ type KubeProxyNFTablesConfiguration struct {
 	// masqueradeBit is the bit of the iptables fwmark space to use for SNAT if using
 	// the nftables proxy mode. Values must be within the range [0, 31].
 	MasqueradeBit *int32
-	// masqueradeAll tells kube-proxy to SNAT all traffic sent to Service cluster IPs,
-	// when using the nftables mode. This may be required with some CNI plugins.
-	MasqueradeAll bool
 	// syncPeriod is an interval (e.g. '5s', '1m', '2h22m') indicating how frequently
 	// various re-synchronizing and cleanup operations are performed. Must be greater
 	// than 0.
@@ -202,6 +208,9 @@ type KubeProxyConfiguration struct {
 	// showHiddenMetricsForVersion is the version for which you want to show hidden metrics.
 	ShowHiddenMetricsForVersion string
 
+	// linux contains linux-platform-related configuration options.
+	Linux KubeProxyLinuxConfiguration
+
 	// mode specifies which proxy mode to use.
 	Mode ProxyMode
 	// iptables contains iptables-related configuration options.
@@ -232,11 +241,6 @@ type KubeProxyConfiguration struct {
 	// object. If unset, NodePort connections will be accepted on all local IPs.
 	NodePortAddresses []string
 
-	// oomScoreAdj is the oom-score-adj value for kube-proxy process. Values must be within
-	// the range [-1000, 1000]
-	OOMScoreAdj *int32
-	// conntrack contains conntrack-related configuration options.
-	Conntrack KubeProxyConntrackConfiguration
 	// configSyncPeriod is how often configuration from the apiserver is refreshed. Must be greater
 	// than 0.
 	ConfigSyncPeriod metav1.Duration

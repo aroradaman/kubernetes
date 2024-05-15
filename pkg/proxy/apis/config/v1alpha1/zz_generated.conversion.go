@@ -187,6 +187,7 @@ func autoConvert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguratio
 	out.EnableProfiling = in.EnableProfiling
 	out.ShowHiddenMetricsForVersion = in.ShowHiddenMetricsForVersion
 	// WARNING: in.Linux requires manual conversion: does not exist in peer-type
+	// WARNING: in.Windows requires manual conversion: does not exist in peer-type
 	out.Mode = v1alpha1.ProxyMode(in.Mode)
 	if err := Convert_config_KubeProxyIPTablesConfiguration_To_v1alpha1_KubeProxyIPTablesConfiguration(&in.IPTables, &out.IPTables, s); err != nil {
 		return err

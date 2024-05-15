@@ -35,6 +35,13 @@ type KubeProxyLinuxConfiguration struct {
 	OOMScoreAdj *int32
 }
 
+// KubeProxyWindowsConfiguration contains windows-platform-related configuration details for the
+// Kubernetes proxy server that aren't specific to a particular backend
+type KubeProxyWindowsConfiguration struct {
+	// runAsService, if true, enables windows service control manager API integration.
+	RunAsService bool
+}
+
 // KubeProxyIPTablesConfiguration contains iptables-related configuration
 // details for the Kubernetes proxy server.
 type KubeProxyIPTablesConfiguration struct {
@@ -210,6 +217,8 @@ type KubeProxyConfiguration struct {
 
 	// linux contains linux-platform-related configuration options.
 	Linux KubeProxyLinuxConfiguration
+	// windows contains windows-related configuration options.
+	Windows KubeProxyWindowsConfiguration
 
 	// mode specifies which proxy mode to use.
 	Mode ProxyMode

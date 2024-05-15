@@ -36,6 +36,7 @@ func Convert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguration(in
 	default:
 		out.Linux.MasqueradeAll = in.IPTables.MasqueradeAll
 	}
+	out.Windows = config.KubeProxyWindowsConfiguration{}
 	return nil
 }
 

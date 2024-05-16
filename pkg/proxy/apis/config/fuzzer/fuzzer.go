@@ -45,6 +45,7 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 			obj.IPTables.MasqueradeBit = ptr.To(c.Int31())
 			obj.IPTables.LocalhostNodePorts = ptr.To(c.RandBool())
 			obj.NFTables.MasqueradeBit = ptr.To(c.Int31())
+			obj.IPVS.MasqueradeBit = obj.IPTables.MasqueradeBit
 			obj.MetricsBindAddress = fmt.Sprintf("%d.%d.%d.%d:%d", c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(65536))
 			obj.ClientConnection.ContentType = "bar"
 			obj.NodePortAddresses = []string{"1.2.3.0/24"}

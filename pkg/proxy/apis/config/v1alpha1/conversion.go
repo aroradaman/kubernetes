@@ -54,6 +54,7 @@ func Convert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguration(in
 	if len(in.ClusterCIDR) > 0 {
 		out.DetectLocal.ClusterCIDRs = strings.Split(in.ClusterCIDR, ",")
 	}
+	out.IPVS.MasqueradeBit = in.IPTables.MasqueradeBit
 	return nil
 }
 
@@ -100,6 +101,14 @@ func Convert_v1alpha1_KubeProxyNFTablesConfiguration_To_config_KubeProxyNFTables
 // Convert_v1alpha1_KubeProxyIPVSConfiguration_To_config_KubeProxyIPVSConfiguration is defined here, because public conversion is not auto-generated due to existing warnings.
 func Convert_v1alpha1_KubeProxyIPVSConfiguration_To_config_KubeProxyIPVSConfiguration(in *v1alpha1.KubeProxyIPVSConfiguration, out *config.KubeProxyIPVSConfiguration, scope conversion.Scope) error {
 	if err := autoConvert_v1alpha1_KubeProxyIPVSConfiguration_To_config_KubeProxyIPVSConfiguration(in, out, scope); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Convert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration is defined here, because public conversion is not auto-generated due to existing warnings.
+func Convert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration(in *config.KubeProxyIPVSConfiguration, out *v1alpha1.KubeProxyIPVSConfiguration, scope conversion.Scope) error {
+	if err := autoConvert_config_KubeProxyIPVSConfiguration_To_v1alpha1_KubeProxyIPVSConfiguration(in, out, scope); err != nil {
 		return err
 	}
 	return nil

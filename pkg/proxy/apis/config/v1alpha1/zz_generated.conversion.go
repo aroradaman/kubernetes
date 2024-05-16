@@ -165,7 +165,7 @@ func autoConvert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguratio
 	// WARNING: in.OOMScoreAdj requires manual conversion: does not exist in peer-type
 	// WARNING: in.Conntrack requires manual conversion: does not exist in peer-type
 	out.ConfigSyncPeriod = in.ConfigSyncPeriod
-	out.PortRange = in.PortRange
+	// WARNING: in.PortRange requires manual conversion: does not exist in peer-type
 	return nil
 }
 
@@ -205,7 +205,6 @@ func autoConvert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguratio
 	// WARNING: in.SyncPeriod requires manual conversion: does not exist in peer-type
 	// WARNING: in.MinSyncPeriod requires manual conversion: does not exist in peer-type
 	out.ConfigSyncPeriod = in.ConfigSyncPeriod
-	out.PortRange = in.PortRange
 	return nil
 }
 

@@ -33,7 +33,7 @@ func Funcs(codecs runtimeserializer.CodecFactory) []interface{} {
 	return []interface{}{
 		func(obj *kubeproxyconfig.KubeProxyConfiguration, c fuzz.Continue) {
 			c.FuzzNoCustom(obj)
-			obj.BindAddress = fmt.Sprintf("%d.%d.%d.%d", c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(256))
+			obj.NodeIPOverride = []string{fmt.Sprintf("%d.%d.%d.%d", c.Intn(256), c.Intn(256), c.Intn(256), c.Intn(256))}
 			obj.ClientConnection.ContentType = c.RandString()
 			obj.Linux.Conntrack.MaxPerCore = ptr.To(c.Int31())
 			obj.Linux.Conntrack.Min = ptr.To(c.Int31())

@@ -55,6 +55,7 @@ func Convert_v1alpha1_KubeProxyConfiguration_To_config_KubeProxyConfiguration(in
 		out.DetectLocal.ClusterCIDRs = strings.Split(in.ClusterCIDR, ",")
 	}
 	out.IPVS.MasqueradeBit = in.IPTables.MasqueradeBit
+	out.NodeIPOverride = []string{in.BindAddress}
 	return nil
 }
 
@@ -78,6 +79,9 @@ func Convert_config_KubeProxyConfiguration_To_v1alpha1_KubeProxyConfiguration(in
 
 	if len(in.DetectLocal.ClusterCIDRs) > 0 {
 		out.ClusterCIDR = strings.Join(in.DetectLocal.ClusterCIDRs, ",")
+	}
+	if len(in.NodeIPOverride) > 0 {
+		out.BindAddress = in.NodeIPOverride[0]
 	}
 	return nil
 }

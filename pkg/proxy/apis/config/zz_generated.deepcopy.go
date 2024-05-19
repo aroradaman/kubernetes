@@ -60,6 +60,11 @@ func (in *KubeProxyConfiguration) DeepCopyInto(out *KubeProxyConfiguration) {
 	}
 	out.ClientConnection = in.ClientConnection
 	in.Logging.DeepCopyInto(&out.Logging)
+	if in.NodeIPOverride != nil {
+		in, out := &in.NodeIPOverride, &out.NodeIPOverride
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Linux.DeepCopyInto(&out.Linux)
 	out.Windows = in.Windows
 	in.IPTables.DeepCopyInto(&out.IPTables)

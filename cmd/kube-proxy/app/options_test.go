@@ -189,7 +189,7 @@ nodePortAddresses:
 				expBindAddr = expBindAddr[1 : len(tc.bindAddress)-1]
 			}
 			expected := &kubeproxyconfig.KubeProxyConfiguration{
-				BindAddress: expBindAddr,
+				NodeIPOverride: []string{expBindAddr},
 				ClientConnection: componentbaseconfig.ClientConnectionConfiguration{
 					AcceptContentTypes: "abc",
 					Burst:              100,
@@ -416,6 +416,15 @@ func TestProcessIncompatibleFlags(t *testing.T) {
 			},
 			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
 				return reflect.DeepEqual(config.DetectLocal.ClusterCIDRs, []string{"2002:0:0:1234::/64", "10.0.0.0/14"})
+			},
+		},
+		{
+			name: "bind address",
+			flags: []string{
+				"--bind-address=0.0.0.0",
+			},
+			validate: func(config *kubeproxyconfig.KubeProxyConfiguration) bool {
+				return reflect.DeepEqual(config.NodeIPOverride, []string{"0.0.0.0"})
 			},
 		},
 	}

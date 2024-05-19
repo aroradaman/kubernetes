@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -220,8 +221,8 @@ func newProxyServer(ctx context.Context, config *kubeproxyconfig.KubeProxyConfig
 		Namespace: "",
 	}
 
-	if len(config.HealthzBindAddress) > 0 {
-		s.HealthzServer = healthcheck.NewProxierHealthServer(config.HealthzBindAddress, 2*config.SyncPeriod.Duration)
+	if len(config.HealthzBindAddresses) > 0 {
+		s.HealthzServer = healthcheck.NewProxierHealthServer(config.HealthzBindAddresses, config.HealthzBindPort, 2*config.SyncPeriod.Duration)
 	}
 
 	err = s.platformSetup(ctx)
@@ -341,11 +342,11 @@ func checkBadIPConfig(s *ProxyServer, dualStackSupported bool) (err error, fatal
 			errors = append(errors, fmt.Errorf("cluster is %s but ipvs.excludeCIDRs contains only IPv%s addresses", clusterType, badFamily))
 		}
 
-		if badBindAddress(s.Config.HealthzBindAddress, badFamily) {
-			errors = append(errors, fmt.Errorf("cluster is %s but healthzBindAddress is IPv%s", clusterType, badFamily))
+		if badBindAddresses(s.Config.HealthzBindAddresses, badFamily) {
+			errors = append(errors, fmt.Errorf("cluster is %s but healthzBindAddresses doesn't contain IPv%s cidr", clusterType, badFamily))
 		}
-		if badBindAddress(s.Config.MetricsBindAddress, badFamily) {
-			errors = append(errors, fmt.Errorf("cluster is %s but metricsBindAddress is IPv%s", clusterType, badFamily))
+		if badBindAddresses(s.Config.MetricsBindAddresses, badFamily) {
+			errors = append(errors, fmt.Errorf("cluster is %s but metricsBindAddresses doesn't contain IPv%s cidr", clusterType, badFamily))
 		}
 	}
 
@@ -368,16 +369,19 @@ func badCIDRs(cidrs []string, wrongFamily netutils.IPFamily) bool {
 	return true
 }
 
-// badBindAddress returns true if bindAddress is an "IP:port" string where IP is a
-// non-zero IP of wrongFamily.
-func badBindAddress(bindAddress string, wrongFamily netutils.IPFamily) bool {
-	if host, _, _ := net.SplitHostPort(bindAddress); host != "" {
-		ip := netutils.ParseIPSloppy(host)
-		if ip != nil && netutils.IPFamilyOf(ip) == wrongFamily && !ip.IsUnspecified() {
-			return true
+// badBindAddresses returns true if cidrs is a non-empty list of CIDRs, all of wrongFamily.
+// Unspecified addresses '0.0.0.0' and '::' are not treated as part of either family.
+func badBindAddresses(addresses []string, wrongFamily netutils.IPFamily) bool {
+	if len(addresses) == 0 {
+		return false
+	}
+	for _, address := range addresses {
+		ip, _, _ := netutils.ParseCIDRSloppy(address)
+		if netutils.IPFamilyOf(ip) != wrongFamily || ip.IsUnspecified() {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // createClient creates a kube client from the given config and masterOverride.
@@ -414,34 +418,7 @@ func createClient(ctx context.Context, config componentbaseconfig.ClientConnecti
 	return client, nil
 }
 
-func serveHealthz(ctx context.Context, hz *healthcheck.ProxierHealthServer, errCh chan error) {
-	logger := klog.FromContext(ctx)
-	if hz == nil {
-		return
-	}
-
-	fn := func() {
-		err := hz.Run()
-		if err != nil {
-			logger.Error(err, "Healthz server failed")
-			if errCh != nil {
-				errCh <- fmt.Errorf("healthz server failed: %w", err)
-				// if in hardfail mode, never retry again
-				blockCh := make(chan error)
-				<-blockCh
-			}
-		} else {
-			logger.Error(nil, "Healthz server returned without error")
-		}
-	}
-	go wait.Until(fn, 5*time.Second, ctx.Done())
-}
-
-func serveMetrics(bindAddress string, proxyMode kubeproxyconfig.ProxyMode, enableProfiling bool, errCh chan error) {
-	if len(bindAddress) == 0 {
-		return
-	}
-
+func serveMetrics(logger klog.Logger, cidrStrings []string, port int32, proxyMode kubeproxyconfig.ProxyMode, enableProfiling bool, bindHardFail bool) chan error {
 	proxyMux := mux.NewPathRecorderMux("kube-proxy")
 	healthz.InstallHandler(proxyMux)
 	slis.SLIMetricsWithReset{}.Install(proxyMux)
@@ -461,20 +438,31 @@ func serveMetrics(bindAddress string, proxyMode kubeproxyconfig.ProxyMode, enabl
 
 	configz.InstallHandler(proxyMux)
 
-	fn := func() {
-		err := http.ListenAndServe(bindAddress, proxyMux)
-		if err != nil {
-			err = fmt.Errorf("starting metrics server failed: %w", err)
-			utilruntime.HandleError(err)
-			if errCh != nil {
-				errCh <- err
-				// if in hardfail mode, never retry again
-				blockCh := make(chan error)
-				<-blockCh
+	nodeIPs, err := proxyutil.FilterInterfaceAddrsByCIDRStrings(proxyutil.RealNetwork{}, cidrStrings)
+	if err != nil {
+		logger.Error(err, "failed to get get node ips for metrics server")
+	}
+	if len(nodeIPs) == 0 {
+		logger.Info("failed to get any node ip matching metricsBindAddresses", "metricsBindAddresses", cidrStrings)
+	}
+	errCh := make(chan error)
+	for _, nodeIP := range nodeIPs {
+		stopCh := make(chan struct{})
+		addr := net.JoinHostPort(nodeIP.String(), strconv.Itoa(int(port)))
+		fn := func() {
+			err := http.ListenAndServe(addr, proxyMux)
+			if err != nil {
+				err = fmt.Errorf("starting metrics server failed: %w", err)
+				utilruntime.HandleError(err)
+				if err != nil && bindHardFail {
+					stopCh <- struct{}{}
+					errCh <- err
+				}
 			}
 		}
+		go wait.Until(fn, 5*time.Second, stopCh)
 	}
-	go wait.Until(fn, 5*time.Second, wait.NeverStop)
+	return errCh
 }
 
 // Run runs the specified ProxyServer.  This should never exit (unless CleanupAndExit is set).
@@ -503,18 +491,17 @@ func (s *ProxyServer) Run(ctx context.Context) error {
 	}
 
 	// TODO(thockin): make it possible for healthz and metrics to be on the same port.
-
-	var healthzErrCh, metricsErrCh chan error
-	if s.Config.BindAddressHardFail {
-		healthzErrCh = make(chan error)
-		metricsErrCh = make(chan error)
+	// Start up a healthz server if requested
+	var healthzErrCh chan error
+	if s.HealthzServer != nil {
+		healthzErrCh = s.HealthzServer.Run(s.Config.BindAddressHardFail)
 	}
 
-	// Start up a healthz server if requested
-	serveHealthz(ctx, s.HealthzServer, healthzErrCh)
-
 	// Start up a metrics server if requested
-	serveMetrics(s.Config.MetricsBindAddress, s.Config.Mode, s.Config.EnableProfiling, metricsErrCh)
+	var metricsErrCh chan error
+	if len(s.Config.MetricsBindAddresses) > 0 {
+		metricsErrCh = serveMetrics(logger, s.Config.MetricsBindAddresses, s.Config.MetricsBindPort, s.Config.Mode, s.Config.EnableProfiling, s.Config.BindAddressHardFail)
+	}
 
 	noProxyName, err := labels.NewRequirement(apis.LabelServiceProxyName, selection.DoesNotExist, nil)
 	if err != nil {

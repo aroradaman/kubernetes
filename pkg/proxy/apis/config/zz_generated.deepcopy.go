@@ -65,6 +65,16 @@ func (in *KubeProxyConfiguration) DeepCopyInto(out *KubeProxyConfiguration) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.HealthzBindAddresses != nil {
+		in, out := &in.HealthzBindAddresses, &out.HealthzBindAddresses
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.MetricsBindAddresses != nil {
+		in, out := &in.MetricsBindAddresses, &out.MetricsBindAddresses
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Linux.DeepCopyInto(&out.Linux)
 	out.Windows = in.Windows
 	in.IPTables.DeepCopyInto(&out.IPTables)

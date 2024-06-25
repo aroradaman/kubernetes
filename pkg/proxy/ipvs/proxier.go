@@ -385,7 +385,7 @@ func NewProxier(
 		iptables:              ipt,
 		masqueradeAll:         masqueradeAll,
 		masqueradeMark:        masqueradeMark,
-		conntrack:             conntrack.NewExec(exec),
+		conntrack:             conntrack.NewConntracker(),
 		localDetector:         localDetector,
 		hostname:              hostname,
 		nodeIP:                nodeIP,

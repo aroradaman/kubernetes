@@ -119,8 +119,8 @@ func (ct *conntracker) ClearEntriesForPort(port int, isIPv6 bool, protocol v1.Pr
 	}
 
 	filter := &conntrackFilter{}
-	filter.addPort(conntrackOrigDstPort, uint16(port))
 	filter.addProtocol(getProtocolNumber(protocol))
+	filter.addPort(conntrackOrigDstPort, uint16(port))
 
 	family := getNetlinkFamily(isIPv6)
 	klog.V(4).InfoS("Clearing conntrack entries", "port", port, "protocol", protocol)
@@ -162,8 +162,8 @@ func (ct *conntracker) ClearEntriesForPortNAT(dest string, port int, protocol v1
 
 	filter := &conntrackFilter{}
 	filter.addIP(conntrackReplyDstIP, netutils.ParseIPSloppy(dest))
-	filter.addPort(conntrackOrigDstPort, uint16(port))
 	filter.addProtocol(getProtocolNumber(protocol))
+	filter.addPort(conntrackOrigDstPort, uint16(port))
 
 	family := getNetlinkFamily(netutils.IsIPv6String(dest))
 	klog.V(4).InfoS("Clearing conntrack entries", "destination", dest, "port", port, "protocol", protocol)

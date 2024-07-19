@@ -52,7 +52,6 @@ type Interface interface {
 
 // conntracker implements Interface by execing the conntrack tool
 type conntracker struct {
-	nl netlink.Handle
 }
 
 var _ Interface = &conntracker{}
@@ -109,7 +108,7 @@ func (ct *conntracker) ClearEntriesForIP(ip string, protocol v1.Protocol) error 
 		// is expensive to baby-sit all udp connections to kubernetes services.
 		return fmt.Errorf("error deleting connection tracking state for %s service IP: %s, error: %v", protoStr(protocol), ip, err)
 	}
-	klog.V(4).Infof("Cleared %d conntrack entries", n)
+	klog.V(4).InfoS("Cleared conntrack entries", "count", n)
 	return nil
 }
 
@@ -151,7 +150,7 @@ func (ct *conntracker) ClearEntriesForNAT(origin, dest string, protocol v1.Proto
 		// is expensive to baby sit all udp connections to kubernetes services.
 		return fmt.Errorf("error deleting conntrack entries for %s peer {%s, %s}, error: %v", protoStr(protocol), origin, dest, err)
 	}
-	klog.V(4).Infof("Cleared %d conntrack entries", n)
+	klog.V(4).InfoS("Cleared conntrack entries", "count", n)
 	return nil
 }
 
@@ -172,6 +171,6 @@ func (ct *conntracker) ClearEntriesForPortNAT(dest string, port int, protocol v1
 	if err != nil {
 		return fmt.Errorf("error deleting conntrack entries for %s port: %d, error: %v", protoStr(protocol), port, err)
 	}
-	klog.V(4).Infof("Cleared %d conntrack entries", n)
+	klog.V(4).InfoS("Cleared conntrack entries", "count", n)
 	return nil
 }

@@ -52,14 +52,18 @@ type Interface interface {
 
 // conntracker implements Interface by execing the conntrack tool
 type conntracker struct {
+	flowDeleteFunc func(netlink.ConntrackTableType, netlink.InetFamily, netlink.CustomConntrackFilter) (uint, error)
 }
 
 var _ Interface = &conntracker{}
 
 func NewConntracker() Interface {
-	return &conntracker{}
+	return newConntracker(netlink.ConntrackDeleteFilter)
 }
 
+func newConntracker(flowDeleteFunc func(netlink.ConntrackTableType, netlink.InetFamily, netlink.CustomConntrackFilter) (uint, error)) Interface {
+	return &conntracker{flowDeleteFunc: flowDeleteFunc}
+}
 func protoStr(proto v1.Protocol) string {
 	return strings.ToLower(string(proto))
 }
@@ -101,7 +105,7 @@ func (ct *conntracker) ClearEntriesForIP(ip string, protocol v1.Protocol) error 
 
 	family := GetNetlinkFamily(netutils.IsIPv6String(ip))
 	klog.V(4).InfoS("Clearing conntrack entries", "ip", ip, "protocol", protocol)
-	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
+	n, err := ct.flowDeleteFunc(netlink.ConntrackTable, family, filter)
 	if err != nil {
 		// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
 		// These stale udp connection will keep black hole traffic. Making this a best effort operation for now, since it
@@ -124,7 +128,7 @@ func (ct *conntracker) ClearEntriesForPort(port int, isIPv6 bool, protocol v1.Pr
 
 	family := GetNetlinkFamily(isIPv6)
 	klog.V(4).InfoS("Clearing conntrack entries", "port", port, "protocol", protocol)
-	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
+	n, err := ct.flowDeleteFunc(netlink.ConntrackTable, family, filter)
 	if err != nil {
 		return fmt.Errorf("error deleting connection tracking state for %s port: %d, error: %v", protoStr(protocol), port, err)
 	}
@@ -143,7 +147,7 @@ func (ct *conntracker) ClearEntriesForNAT(origin, dest string, protocol v1.Proto
 
 	family := GetNetlinkFamily(netutils.IsIPv6String(origin))
 	klog.V(4).InfoS("Clearing conntrack entries", "origin", origin, "destination", dest, "protocol", protocol)
-	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
+	n, err := ct.flowDeleteFunc(netlink.ConntrackTable, family, filter)
 	if err != nil {
 		// TODO: Better handling for deletion failure. When failure occur, stale udp connection may not get flushed.
 		// These stale udp connection will keep black hole traffic. Making this a best effort operation for now, since it
@@ -167,7 +171,7 @@ func (ct *conntracker) ClearEntriesForPortNAT(dest string, port int, protocol v1
 
 	family := GetNetlinkFamily(netutils.IsIPv6String(dest))
 	klog.V(4).InfoS("Clearing conntrack entries", "destination", dest, "port", port, "protocol", protocol)
-	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
+	n, err := ct.flowDeleteFunc(netlink.ConntrackTable, family, filter)
 	if err != nil {
 		return fmt.Errorf("error deleting conntrack entries for %s port: %d, error: %v", protoStr(protocol), port, err)
 	}

@@ -64,8 +64,8 @@ func protoStr(proto v1.Protocol) string {
 	return strings.ToLower(string(proto))
 }
 
-// getNetlinkFamily returns the Netlink IP family constant
-func getNetlinkFamily(isIPv6 bool) netlink.InetFamily {
+// GetNetlinkFamily returns the Netlink IP family constant
+func GetNetlinkFamily(isIPv6 bool) netlink.InetFamily {
 	if isIPv6 {
 		return unix.AF_INET6
 	}
@@ -99,7 +99,7 @@ func (ct *conntracker) ClearEntriesForIP(ip string, protocol v1.Protocol) error 
 	filter.addIP(conntrackOrigDstIP, netutils.ParseIPSloppy(ip))
 	filter.addProtocol(getProtocolNumber(protocol))
 
-	family := getNetlinkFamily(netutils.IsIPv6String(ip))
+	family := GetNetlinkFamily(netutils.IsIPv6String(ip))
 	klog.V(4).InfoS("Clearing conntrack entries", "ip", ip, "protocol", protocol)
 	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 	if err != nil {
@@ -122,7 +122,7 @@ func (ct *conntracker) ClearEntriesForPort(port int, isIPv6 bool, protocol v1.Pr
 	filter.addProtocol(getProtocolNumber(protocol))
 	filter.addPort(conntrackOrigDstPort, uint16(port))
 
-	family := getNetlinkFamily(isIPv6)
+	family := GetNetlinkFamily(isIPv6)
 	klog.V(4).InfoS("Clearing conntrack entries", "port", port, "protocol", protocol)
 	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 	if err != nil {
@@ -141,7 +141,7 @@ func (ct *conntracker) ClearEntriesForNAT(origin, dest string, protocol v1.Proto
 	filter.addIP(netlink.ConntrackReplyDstIP, netutils.ParseIPSloppy(dest))
 	filter.addProtocol(getProtocolNumber(protocol))
 
-	family := getNetlinkFamily(netutils.IsIPv6String(origin))
+	family := GetNetlinkFamily(netutils.IsIPv6String(origin))
 	klog.V(4).InfoS("Clearing conntrack entries", "origin", origin, "destination", dest, "protocol", protocol)
 	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 	if err != nil {
@@ -165,7 +165,7 @@ func (ct *conntracker) ClearEntriesForPortNAT(dest string, port int, protocol v1
 	filter.addProtocol(getProtocolNumber(protocol))
 	filter.addPort(conntrackOrigDstPort, uint16(port))
 
-	family := getNetlinkFamily(netutils.IsIPv6String(dest))
+	family := GetNetlinkFamily(netutils.IsIPv6String(dest))
 	klog.V(4).InfoS("Clearing conntrack entries", "destination", dest, "port", port, "protocol", protocol)
 	n, err := netlink.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 	if err != nil {

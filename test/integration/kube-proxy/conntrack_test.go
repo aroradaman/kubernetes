@@ -17,7 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package conntrack
+package kube_proxy
 
 import (
 	"net"
@@ -25,9 +25,10 @@ import (
 	"strconv"
 	"testing"
 
-	v1 "k8s.io/api/core/v1"
-
 	"github.com/vishvananda/netlink"
+
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/kubernetes/pkg/proxy/conntrack"
 	netutils "k8s.io/utils/net"
 )
 
@@ -62,7 +63,7 @@ func createUDPConnection(t *testing.T, srcIP, srcPort, dstIP, dstPort string) {
 func TestClearEntriesForIP(t *testing.T) {
 	skipUnlessRoot(t)
 
-	ct := NewConntracker()
+	ct := conntrack.NewConntracker()
 
 	testCases := []struct {
 		srcIP   string
@@ -90,7 +91,7 @@ func TestClearEntriesForIP(t *testing.T) {
 		// Create a conntrack entry
 		createUDPConnection(t, tc.srcIP, strconv.Itoa(tc.srcPort), tc.dstIP, strconv.Itoa(tc.dstPort))
 		// Fetch the conntrack table
-		family := getNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
+		family := conntrack.GetNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
 		flows, err := netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we just created
 		if err != nil {
@@ -113,7 +114,7 @@ func TestClearEntriesForIP(t *testing.T) {
 		}
 
 		// Fetch the conntrack table
-		family = getNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
+		family = conntrack.GetNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
 		flows, err = netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we created
 		if err != nil {
@@ -136,7 +137,7 @@ func TestClearEntriesForIP(t *testing.T) {
 func TestClearEntriesForPort(t *testing.T) {
 	skipUnlessRoot(t)
 
-	ct := NewConntracker()
+	ct := conntrack.NewConntracker()
 
 	testCases := []struct {
 		srcIP   string
@@ -165,7 +166,7 @@ func TestClearEntriesForPort(t *testing.T) {
 		createUDPConnection(t, tc.srcIP, strconv.Itoa(tc.srcPort), tc.dstIP, strconv.Itoa(tc.dstPort))
 
 		// Fetch the conntrack table
-		family := getNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
+		family := conntrack.GetNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
 		flows, err := netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we just created
 		if err != nil {
@@ -189,7 +190,7 @@ func TestClearEntriesForPort(t *testing.T) {
 		}
 
 		// Fetch the conntrack table
-		family = getNetlinkFamily(isIPv6)
+		family = conntrack.GetNetlinkFamily(isIPv6)
 		flows, err = netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we created
 		if err != nil {
@@ -212,7 +213,7 @@ func TestClearEntriesForPort(t *testing.T) {
 func TestClearEntriesForNAT(t *testing.T) {
 	skipUnlessRoot(t)
 
-	ct := NewConntracker()
+	ct := conntrack.NewConntracker()
 
 	testCases := []struct {
 		srcIP   string
@@ -241,7 +242,7 @@ func TestClearEntriesForNAT(t *testing.T) {
 		createUDPConnection(t, tc.srcIP, strconv.Itoa(tc.srcPort), tc.dstIP, strconv.Itoa(tc.dstPort))
 
 		// Fetch the conntrack table
-		family := getNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
+		family := conntrack.GetNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
 		flows, err := netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we just created
 		if err != nil {
@@ -287,7 +288,7 @@ func TestClearEntriesForNAT(t *testing.T) {
 func TestClearConntrackForPortNAT(t *testing.T) {
 	skipUnlessRoot(t)
 
-	ct := NewConntracker()
+	ct := conntrack.NewConntracker()
 
 	testCases := []struct {
 		srcIP   string
@@ -316,7 +317,7 @@ func TestClearConntrackForPortNAT(t *testing.T) {
 		createUDPConnection(t, tc.srcIP, strconv.Itoa(tc.srcPort), tc.dstIP, strconv.Itoa(tc.dstPort))
 
 		// Fetch the conntrack table
-		family := getNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
+		family := conntrack.GetNetlinkFamily(netutils.IsIPv6String(tc.dstIP))
 		flows, err := netlink.ConntrackTableList(netlink.ConntrackTable, family)
 		// Check that it is able to find the flow we just created
 		if err != nil {

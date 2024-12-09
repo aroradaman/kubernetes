@@ -263,6 +263,7 @@ func (s *ProxyServer) createProxier(ctx context.Context, config *proxyconfigapi.
 				s.Recorder,
 				s.HealthzServer,
 				config.NodePortAddresses,
+				int(*config.NFTables.FastpathPacketThreshold),
 				initOnly,
 			)
 		} else {
@@ -281,6 +282,7 @@ func (s *ProxyServer) createProxier(ctx context.Context, config *proxyconfigapi.
 				s.Recorder,
 				s.HealthzServer,
 				config.NodePortAddresses,
+				int(*config.NFTables.FastpathPacketThreshold),
 				initOnly,
 			)
 		}

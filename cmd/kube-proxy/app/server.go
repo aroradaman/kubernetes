@@ -628,7 +628,7 @@ func (s *ProxyServer) birthCry() {
 
 // (Note that on Linux, the node IPs are used only to determine whether a given
 // LoadBalancerSourceRanges value matches the node or not. In particular, they are *not*
-// used for NodePort handling.)
+// used for NodePort handling unless NodePortAddresses is not set to 'primary'.)
 //
 // The order of precedence is:
 //  1. if bindAddress is not 0.0.0.0 or ::, then it is used as the primary IP.

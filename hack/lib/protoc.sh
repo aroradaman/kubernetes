@@ -118,11 +118,11 @@ function kube::protoc::install() {
       local url
       if [[ ${os} == "darwin" ]]; then
         # TODO: switch to universal binary when updating to 3.20+
-        url="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-x86_64.zip"
+        url="https://artifactory.vcfd.broadcom.net/artifactory/github-generic-remote/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-x86_64.zip"
       elif [[ ${os} == "linux" && ${arch} == "amd64" ]]; then
-        url="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+        url="https://artifactory.vcfd.broadcom.net/artifactory/github-generic-remote/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
       elif [[ ${os} == "linux" && ${arch} == "arm64" ]]; then
-        url="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-aarch_64.zip"
+        url="https://artifactory.vcfd.broadcom.net/artifactory/github-generic-remote/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-aarch_64.zip"
       else
         kube::log::info "This install script does not support ${os}/${arch}"
         return 1

@@ -35,10 +35,6 @@ type fakeHandler struct {
 	filters   []*conntrackFilter
 }
 
-func (f *fakeHandler) ConntrackTableList(_ netlink.ConntrackTableType, _ netlink.InetFamily) ([]*netlink.ConntrackFlow, error) {
-	return nil, nil
-}
-
 func (f *fakeHandler) ConntrackDeleteFilters(tableType netlink.ConntrackTableType, family netlink.InetFamily, netlinkFilters ...netlink.CustomConntrackFilter) (uint, error) {
 	f.tableType = tableType
 	f.ipFamily = family
@@ -52,6 +48,7 @@ func (f *fakeHandler) ConntrackDeleteFilters(tableType netlink.ConntrackTableTyp
 var _ netlinkHandler = (*fakeHandler)(nil)
 
 func TestConntracker_ClearEntries(t *testing.T) {
+
 	testCases := []struct {
 		name     string
 		ipFamily uint8

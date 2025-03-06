@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"context"
+	"net"
 	"reflect"
 	"sync"
 
@@ -25,6 +26,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/proxy/config"
 	"k8s.io/kubernetes/pkg/proxy/healthcheck"
+	utilnode "k8s.io/kubernetes/pkg/util/node"
 )
 
 // NodePodCIDRHandler handles the life cycle of kube-proxy based on the node PodCIDR assigned
@@ -109,3 +111,55 @@ func (n *NodeEligibleHandler) OnNodeDelete(node *v1.Node) { n.HealthServer.SyncN
 
 // OnNodeSynced is a handler for Node syncs.
 func (n *NodeEligibleHandler) OnNodeSynced() {}
+
+// NodeManager handles the life cycle of kube-proxy based on the NodeIPs.
+// Implements the config.NodeHandler interface
+// (ref: https://issues.k8s.io/111321)
+type NodeManager struct {
+	nodeIPs []net.IP
+	logger  klog.Logger
+}
+
+func NewNodeManager(ctx context.Context, nodeIPs []net.IP) *NodeManager {
+	return &NodeManager{
+		nodeIPs: nodeIPs,
+		logger:  klog.FromContext(ctx),
+	}
+}
+
+var _ config.NodeHandler = &NodeManager{}
+
+// OnNodeAdd is a handler for Node creates.
+func (n *NodeManager) OnNodeAdd(node *v1.Node) {
+	n.OnNodeUpsert(node)
+}
+
+// OnNodeUpdate is a handler for Node updates.
+func (n *NodeManager) OnNodeUpdate(_, node *v1.Node) {
+	n.OnNodeUpsert(node)
+}
+
+func (n *NodeManager) OnNodeUpsert(node *v1.Node) {
+	nodeIPs, err := utilnode.GetNodeHostIPs(node)
+	if err != nil {
+		n.logger.Error(err, "Failed to retrieve node IPs")
+		return
+	}
+
+	// We exit whenever there is a change in NodeIPs detected initially, and NodeIPs received
+	// on Node watch event. This includes the case when we fail to detect NodeIPs initially in
+	// getNodeIPs() and proceed with empty list of NodeIPs.
+	if !reflect.DeepEqual(n.nodeIPs, nodeIPs) {
+		n.logger.Error(nil, "NodeIPs changed for the node",
+			"node", klog.KObj(node), "newNodeIPs", nodeIPs, "oldNodeIPs", n.nodeIPs)
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+}
+
+// OnNodeDelete is a handler for Node deletes.
+func (n *NodeManager) OnNodeDelete(node *v1.Node) {
+	n.logger.Error(nil, "Current Node is being deleted", "node", klog.KObj(node))
+}
+
+// OnNodeSynced is a handler for Node syncs.
+func (n *NodeManager) OnNodeSynced() {}

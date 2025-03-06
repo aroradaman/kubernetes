@@ -17,12 +17,17 @@ limitations under the License.
 package proxy
 
 import (
+	"net"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/test/utils/ktesting"
+	netutils "k8s.io/utils/net"
 )
 
 func TestNodePodCIDRHandlerAdd(t *testing.T) {
@@ -142,6 +147,70 @@ func TestNodePodCIDRHandlerUpdate(t *testing.T) {
 			}()
 
 			n.OnNodeUpdate(oldNode, node)
+		})
+	}
+}
+
+func TestNodeManagerUpsert(t *testing.T) {
+	oldKlogOsExit := klog.OsExit
+	defer func() {
+		klog.OsExit = oldKlogOsExit
+	}()
+	klog.OsExit = customExit
+
+	baseNode := &v1.Node{
+		Status: v1.NodeStatus{
+			Addresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "192.168.1.1"},
+				{Type: v1.NodeInternalIP, Address: "fd00:1:2:3::1"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name string
+		// nodeIPs represent the initial NodeIPs fetched via getNodeIPs() in cmd/kube-proxy/server.go
+		nodeIPs     []net.IP
+		makeNode     func() *v1.Node
+		expectPanic bool
+	}{
+		{
+			name:    "no initial NodeIPs and node updated without NodeIPs",
+			makeNode: func() *v1.Node { return &v1.Node{} },
+		},
+		{
+			name:        "no initial NodeIPs and node updated with NodeIPs",
+			makeNode:     func() *v1.Node { return baseNode.DeepCopy() },
+			expectPanic: true,
+		},
+		{
+			name:    "node updated with same NodeIPs",
+			nodeIPs: []net.IP{netutils.ParseIPSloppy("192.168.1.1"), netutils.ParseIPSloppy("fd00:1:2:3::1")},
+			makeNode: func() *v1.Node { return baseNode.DeepCopy() },
+		},
+		{
+			name:    "node updated with different NodeIPs",
+			nodeIPs: []net.IP{netutils.ParseIPSloppy("192.168.1.1"), netutils.ParseIPSloppy("fd00:1:2:3::1")},
+			makeNode: func() *v1.Node {
+				node := baseNode.DeepCopy()
+				node.Status.Addresses = []v1.NodeAddress{
+					{Type: v1.NodeInternalIP, Address: "10.0.1.1"},
+					{Type: v1.NodeInternalIP, Address: "fd00:3:2:1::2"},
+				}
+				return node
+			},
+			expectPanic: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ctx := ktesting.NewTestContext(t)
+			n := NewNodeManager(ctx, tc.nodeIPs)
+			if tc.expectPanic {
+				require.Panics(t, func() { n.OnNodeUpsert(tc.makeNode()) })
+			} else {
+				require.NotPanics(t, func() { n.OnNodeUpsert(tc.makeNode()) })
+			}
 		})
 	}
 }

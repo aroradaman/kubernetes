@@ -176,6 +176,7 @@ type ProxyServer struct {
 	NodeIPs         map[v1.IPFamily]net.IP
 	flagz           flagz.Reader
 
+	rawNodeIPs   []net.IP
 	podCIDRs     []string // only used for LocalModeNodeCIDR
 	nodeInformer v1informers.NodeInformer
 
@@ -224,8 +225,8 @@ func newProxyServer(ctx context.Context, config *kubeproxyconfig.KubeProxyConfig
 		return nil, fmt.Errorf("can not sync node informer")
 	}
 
-	rawNodeIPs := getNodeIPs(ctx, nodeLister, s.Hostname)
-	s.PrimaryIPFamily, s.NodeIPs = detectNodeIPs(ctx, rawNodeIPs, config.BindAddress)
+	s.rawNodeIPs = getNodeIPs(ctx, nodeLister, s.Hostname)
+	s.PrimaryIPFamily, s.NodeIPs = detectNodeIPs(ctx, s.rawNodeIPs, config.BindAddress)
 
 	if len(config.NodePortAddresses) == 1 && config.NodePortAddresses[0] == kubeproxyconfig.NodePortAddressesPrimary {
 		var nodePortAddresses []string
@@ -620,7 +621,13 @@ func (s *ProxyServer) Run(ctx context.Context) error {
 		HealthServer: s.HealthzServer,
 	})
 	nodeConfig.RegisterEventHandler(s.Proxier)
-
+	// TODO: remove once ConsistentReadFromCache and/or WatchList graduate to GA
+	// Informers may get stale data, specially in cases where the kube-proxy runs as a static pod
+	// or an independent binary, since it may run before the kubelet on the node updates the Node.
+	// The solution in the meantime is to process the Node events and crash if the NodeIPs
+	// has changed since the first read.
+	// https://issues.k8s.io/111321
+	nodeConfig.RegisterEventHandler(proxy.NewNodeManager(ctx, s.rawNodeIPs))
 	go nodeConfig.Run(wait.NeverStop)
 
 	// Birth Cry after the birth is successful

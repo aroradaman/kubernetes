@@ -304,6 +304,13 @@ func NewNodeConfig(ctx context.Context, nodeInformer v1informers.NodeInformer, r
 	result := &NodeConfig{
 		logger: klog.FromContext(ctx),
 	}
+	// This handles the case (hollow_proxier) where ProxyServer is instantiated without
+	// the "newProxyServer" function, and "Run" is called which panics as we are creating
+	// the NodeInformers in "newProxyServer" now. Hollow Proxy uses NoopNodeHandler, it
+	// is safe to skip handler registration.
+	if nodeInformer == nil {
+		return result
+	}
 
 	handlerRegistration, _ := nodeInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
@@ -328,13 +335,15 @@ func (c *NodeConfig) RegisterEventHandler(handler NodeHandler) {
 func (c *NodeConfig) Run(stopCh <-chan struct{}) {
 	c.logger.Info("Starting node config controller")
 
-	if !cache.WaitForNamedCacheSync("node config", stopCh, c.listerSynced) {
-		return
-	}
+	if c.listerSynced != nil {
+		if !cache.WaitForNamedCacheSync("node config", stopCh, c.listerSynced) {
+			return
+		}
 
-	for i := range c.eventHandlers {
-		c.logger.V(3).Info("Calling handler.OnNodeSynced()")
-		c.eventHandlers[i].OnNodeSynced()
+		for i := range c.eventHandlers {
+			c.logger.V(3).Info("Calling handler.OnNodeSynced()")
+			c.eventHandlers[i].OnNodeSynced()
+		}
 	}
 }
 

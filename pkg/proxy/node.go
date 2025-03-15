@@ -28,26 +28,6 @@ import (
 	utilnode "k8s.io/kubernetes/pkg/util/node"
 )
 
-// NodeEligibleHandler handles the life cycle of the Node's eligibility, as
-// determined by the health server for directing load balancer traffic.
-type NodeEligibleHandler struct {
-	HealthServer *healthcheck.ProxyHealthServer
-}
-
-var _ config.NodeHandler = &NodeEligibleHandler{}
-
-// OnNodeAdd is a handler for Node creates.
-func (n *NodeEligibleHandler) OnNodeAdd(node *v1.Node) { n.HealthServer.SyncNode(node) }
-
-// OnNodeUpdate is a handler for Node updates.
-func (n *NodeEligibleHandler) OnNodeUpdate(_, node *v1.Node) { n.HealthServer.SyncNode(node) }
-
-// OnNodeDelete is a handler for Node deletes.
-func (n *NodeEligibleHandler) OnNodeDelete(node *v1.Node) { n.HealthServer.SyncNode(node) }
-
-// OnNodeSynced is a handler for Node syncs.
-func (n *NodeEligibleHandler) OnNodeSynced() {}
-
 // NodeManager handles the life cycle of kube-proxy based on the NodeIPs and PodCIDRs.
 // Implements the config.NodeHandler interface
 // (ref: https://issues.k8s.io/111321)
@@ -55,14 +35,16 @@ type NodeManager struct {
 	nodeIPs           []net.IP
 	podCIDRs          []string
 	localModeNodeCIDR bool
+	healthServer      *healthcheck.ProxyHealthServer
 	logger            klog.Logger
 }
 
-func NewNodeManager(ctx context.Context, nodeIPs []net.IP, podCIDRs []string, localModeNodeCIDR bool) *NodeManager {
+func NewNodeManager(ctx context.Context, nodeIPs []net.IP, podCIDRs []string, localModeNodeCIDR bool, healthServer *healthcheck.ProxyHealthServer) *NodeManager {
 	return &NodeManager{
 		nodeIPs:           nodeIPs,
 		podCIDRs:          podCIDRs,
 		localModeNodeCIDR: localModeNodeCIDR,
+		healthServer:      healthServer,
 		logger:            klog.FromContext(ctx),
 	}
 }
@@ -80,6 +62,7 @@ func (n *NodeManager) OnNodeUpdate(_, node *v1.Node) {
 }
 
 func (n *NodeManager) OnNodeUpsert(node *v1.Node) {
+	n.healthServer.SyncNode(node)
 	if n.localModeNodeCIDR {
 		podCIDRs := node.Spec.PodCIDRs
 		// We exit whenever there is a change in PoDCIDRs detected initially, and PoDCIDRs received
@@ -110,6 +93,7 @@ func (n *NodeManager) OnNodeUpsert(node *v1.Node) {
 
 // OnNodeDelete is a handler for Node deletes.
 func (n *NodeManager) OnNodeDelete(node *v1.Node) {
+	n.healthServer.SyncNode(node)
 	n.logger.Error(nil, "Current Node is being deleted", "node", klog.KObj(node))
 }
 

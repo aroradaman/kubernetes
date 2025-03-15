@@ -613,9 +613,6 @@ func (s *ProxyServer) Run(ctx context.Context) error {
 	serviceInformerFactory.Start(wait.NeverStop)
 
 	nodeConfig := config.NewNodeConfig(ctx, s.nodeInformer, s.Config.ConfigSyncPeriod.Duration)
-	nodeConfig.RegisterEventHandler(&proxy.NodeEligibleHandler{
-		HealthServer: s.HealthzServer,
-	})
 	nodeConfig.RegisterEventHandler(s.Proxier)
 	// TODO: remove once ConsistentReadFromCache and/or WatchList graduate to GA
 	// Informers may get stale data, specially in cases where the kube-proxy runs as a static pod
@@ -624,7 +621,7 @@ func (s *ProxyServer) Run(ctx context.Context) error {
 	// the PodCIDRs (if detect local is NodeCIDR) has changed since the first read.
 	// https://issues.k8s.io/111321
 	localModeNodeCIDR := s.Config.DetectLocalMode == kubeproxyconfig.LocalModeNodeCIDR
-	nodeConfig.RegisterEventHandler(proxy.NewNodeManager(ctx, s.rawNodeIPs, s.podCIDRs, localModeNodeCIDR))
+	nodeConfig.RegisterEventHandler(proxy.NewNodeManager(ctx, s.rawNodeIPs, s.podCIDRs, localModeNodeCIDR, s.HealthzServer))
 	go nodeConfig.Run(wait.NeverStop)
 
 	// Birth Cry after the birth is successful

@@ -25,6 +25,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/proxy/healthcheck"
 	"k8s.io/kubernetes/test/utils/ktesting"
 	netutils "k8s.io/utils/net"
 )
@@ -146,7 +147,7 @@ func TestNodeManagerUpsert(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ctx := ktesting.NewTestContext(t)
-			n := NewNodeManager(ctx, tc.nodeIPs, tc.podCIDRs, tc.localModeNodeCIDR)
+			n := NewNodeManager(ctx, tc.nodeIPs, tc.podCIDRs, tc.localModeNodeCIDR, &healthcheck.ProxyHealthServer{})
 			if tc.expectPanic {
 				require.Panics(t, func() { n.OnNodeUpsert(tc.makeNode()) })
 			} else {

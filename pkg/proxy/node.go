@@ -51,16 +51,7 @@ func NewNodeManager(ctx context.Context, nodeIPs []net.IP, podCIDRs []string, lo
 
 var _ config.NodeHandler = &NodeManager{}
 
-// OnNodeAdd is a handler for Node creates.
-func (n *NodeManager) OnNodeAdd(node *v1.Node) {
-	n.OnNodeUpsert(node)
-}
-
-// OnNodeUpdate is a handler for Node updates.
-func (n *NodeManager) OnNodeUpdate(_, node *v1.Node) {
-	n.OnNodeUpsert(node)
-}
-
+// OnNodeUpsert is a handler for Node upserts.
 func (n *NodeManager) OnNodeUpsert(node *v1.Node) {
 	n.healthServer.SyncNode(node)
 	if n.localModeNodeCIDR {

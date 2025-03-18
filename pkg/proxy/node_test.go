@@ -68,6 +68,12 @@ func tweakPodCIDRs(podCIDRs ...string) nodeTweak {
 	}
 }
 
+func tweakResourceVersion(resourceVersion string) nodeTweak {
+	return func(n *v1.Node) {
+		n.ObjectMeta.ResourceVersion = resourceVersion
+	}
+}
+
 func TestNewNodeManager(t *testing.T) {
 	testCases := []struct {
 		name             string
@@ -280,4 +286,22 @@ func TestNodeManagerOnNodeDelete(t *testing.T) {
 	}
 	n.OnNodeDelete(makeNode())
 	require.Equal(t, ptr.To(1), exitCode)
+}
+
+func TestNodeManagerNode(t *testing.T) {
+	makeNode := func(resourceVersion string) *v1.Node {
+		return &v1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            testNodeName,
+				ResourceVersion: resourceVersion,
+			},
+		}
+	}
+
+	manager := NodeManager{}
+	manager.OnNodeAdd(makeNode("1"))
+	require.Equal(t, makeNode("1"), manager.Node())
+
+	manager.OnNodeUpdate(nil, makeNode("2"))
+	require.Equal(t, makeNode("2"), manager.Node())
 }

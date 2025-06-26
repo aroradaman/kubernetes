@@ -359,6 +359,8 @@ func (r *REST) afterDelete(obj runtime.Object, options *metav1.DeleteOptions) {
 func (r *REST) beginCreate(ctx context.Context, obj runtime.Object, options *metav1.CreateOptions) (genericregistry.FinishFunc, error) {
 	svc := obj.(*api.Service)
 
+	fmt.Println("\n\n\n\n\\n####################################################################\nBEGIN SERVICE CREATE")
+	fmt.Println(svc.Name, svc.Namespace, svc.Generation)
 	// Make sure ClusterIP and ClusterIPs are in sync.  This has to happen
 	// early, before anyone looks at them.
 	normalizeClusterIPs(After{svc}, Before{nil})

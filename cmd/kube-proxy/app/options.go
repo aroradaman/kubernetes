@@ -303,7 +303,14 @@ func (o *Options) initWatcher() error {
 }
 
 func (o *Options) eventHandler(ent fsnotify.Event) {
-	if ent.Has(fsnotify.Write) || ent.Has(fsnotify.Rename) {
+	fmt.Println("EVENT", ent, ent.Name, ent.Op)
+	// Remove event is received without change
+	if ent.Has(fsnotify.Remove) {
+		// best-effort add the file to watcher as remove will delete the file
+		_ = o.watcher.AddWatch(o.ConfigFile)
+		return
+	}
+	if ent.Has(fsnotify.Create) || ent.Has(fsnotify.Write) || ent.Has(fsnotify.Rename) {
 		// error out when ConfigFile is updated
 		o.errCh <- fmt.Errorf("content of the proxy server's configuration file was updated")
 		return

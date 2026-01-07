@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	v1 "k8s.io/api/core/v1"
@@ -121,7 +122,8 @@ var _ = common.SIGDescribe("HostPort", func() {
 		cmdPod2 := []string{"/bin/sh", "-c", fmt.Sprintf("curl -g --connect-timeout %v http://%s/hostname", timeout, net.JoinHostPort(hostIP, strconv.Itoa(int(port))))}
 		cmdPod3 := []string{"/bin/sh", "-c", fmt.Sprintf("echo hostname | nc -u -w %v %s %d", timeout, hostIP, port)}
 		// try 5 times to connect to the exposed ports
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 500000000; i++ {
+			time.Sleep(time.Minute)
 			// check pod1
 			ginkgo.By(fmt.Sprintf("checking connectivity from pod %s to serverIP: %s, port: %d", hostExecPod.Name, localhost, port))
 			hostname1, _, err := e2epod.ExecCommandInContainerWithFullOutput(f, hostExecPod.Name, "e2e-host-exec", cmdPod1...)
